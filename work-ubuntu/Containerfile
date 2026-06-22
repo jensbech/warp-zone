@@ -1,0 +1,132 @@
+FROM golang:1.24-bookworm AS jira-builder
+
+ENV CGO_ENABLED=0 GO111MODULE=on
+
+RUN go install github.com/go-jira/jira/cmd/jira@v1.0.27
+
+FROM ubuntu:24.04
+
+ARG NODE_MAJOR=24
+ARG PULUMI_VERSION=3.247.0
+ARG KUBECTL_VERSION=v1.36.2
+ARG K9S_VERSION=v0.51.0
+ARG PNPM_VERSION=10.33.0
+ARG YARN_VERSION=4.9.2
+ARG APP_USER=elk
+ARG APP_UID=1001
+ARG PROFILE_PROMPT=ELK
+ARG INCLUDE_NODE=true
+ARG INCLUDE_DOTNET=true
+ARG INCLUDE_AZURE_CLI=true
+ARG INCLUDE_PULUMI=true
+ARG INCLUDE_KUBECTL=true
+ARG INCLUDE_GH=true
+ARG INCLUDE_JIRA=true
+ARG INCLUDE_K9S=true
+ARG INCLUDE_PYTHON=true
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    APP_USER=${APP_USER} \
+    APP_UID=${APP_UID} \
+    APP_HOME=/home/${APP_USER} \
+    PROFILE_PROMPT=${PROFILE_PROMPT} \
+    INCLUDE_NODE=${INCLUDE_NODE} \
+    INCLUDE_DOTNET=${INCLUDE_DOTNET} \
+    INCLUDE_AZURE_CLI=${INCLUDE_AZURE_CLI} \
+    INCLUDE_PULUMI=${INCLUDE_PULUMI} \
+    INCLUDE_KUBECTL=${INCLUDE_KUBECTL} \
+    INCLUDE_GH=${INCLUDE_GH} \
+    INCLUDE_JIRA=${INCLUDE_JIRA} \
+    INCLUDE_K9S=${INCLUDE_K9S} \
+    INCLUDE_PYTHON=${INCLUDE_PYTHON} \
+    PATH=/home/${APP_USER}/.local/bin:/home/${APP_USER}/.dotnet/tools:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update \
+ && packages="bash bat build-essential ca-certificates curl eza file fzf git gnupg jq less lsb-release openssh-client procps sudo tmux unzip vim wget xz-utils zip zsh zsh-autosuggestions zsh-syntax-highlighting" \
+ && if [ "$INCLUDE_PYTHON" = "true" ]; then packages="$packages python3 python3-pip python3-venv"; fi \
+ && apt-get install -y --no-install-recommends $packages \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /etc/apt/keyrings \
+ && if [ "$INCLUDE_GH" = "true" ]; then \
+      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
+      chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list; \
+    fi \
+ && if [ "$INCLUDE_NODE" = "true" ]; then \
+      curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; \
+      chmod go+r /etc/apt/keyrings/nodesource.gpg; \
+      echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list; \
+    fi \
+ && if [ "$INCLUDE_AZURE_CLI" = "true" ] || [ "$INCLUDE_DOTNET" = "true" ]; then \
+      curl -sLS https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg; \
+      chmod go+r /etc/apt/keyrings/microsoft.gpg; \
+    fi \
+ && if [ "$INCLUDE_AZURE_CLI" = "true" ]; then \
+      printf "Types: deb\nURIs: https://packages.microsoft.com/repos/azure-cli/\nSuites: noble\nComponents: main\nArchitectures: %s\nSigned-by: /etc/apt/keyrings/microsoft.gpg\n" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/azure-cli.sources; \
+    fi \
+ && if [ "$INCLUDE_DOTNET" = "true" ]; then \
+      printf "Types: deb\nURIs: https://packages.microsoft.com/ubuntu/24.04/prod\nSuites: noble\nComponents: main\nArchitectures: %s\nSigned-by: /etc/apt/keyrings/microsoft.gpg\n" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/microsoft-prod.sources; \
+    fi
+
+RUN apt-get update \
+ && packages="" \
+ && if [ "$INCLUDE_AZURE_CLI" = "true" ]; then packages="$packages azure-cli"; fi \
+ && if [ "$INCLUDE_DOTNET" = "true" ]; then packages="$packages dotnet-sdk-8.0 dotnet-sdk-10.0"; fi \
+ && if [ "$INCLUDE_GH" = "true" ]; then packages="$packages gh"; fi \
+ && if [ "$INCLUDE_NODE" = "true" ]; then packages="$packages nodejs"; fi \
+ && if [ -n "$packages" ]; then apt-get install -y --no-install-recommends $packages; fi \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN if [ "$INCLUDE_NODE" = "true" ]; then \
+      corepack enable; \
+      corepack prepare "pnpm@${PNPM_VERSION}" --activate; \
+      corepack prepare "yarn@${YARN_VERSION}" --activate; \
+    fi
+
+RUN if [ "$INCLUDE_PULUMI" = "true" ]; then \
+      curl -fsSL https://get.pulumi.com | sh -s -- --version "${PULUMI_VERSION}"; \
+      install /root/.pulumi/bin/pulumi /usr/local/bin/pulumi; \
+    fi
+
+RUN if [ "$INCLUDE_KUBECTL" = "true" ]; then \
+      arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        arm64) kubectl_arch=arm64 ;; \
+        amd64) kubectl_arch=amd64 ;; \
+        *) exit 1 ;; \
+      esac; \
+      curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${kubectl_arch}/kubectl"; \
+      chmod +x /usr/local/bin/kubectl; \
+    fi
+
+RUN if [ "$INCLUDE_K9S" = "true" ]; then \
+      arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        arm64) k9s_arch=arm64 ;; \
+        amd64) k9s_arch=amd64 ;; \
+        *) exit 1 ;; \
+      esac; \
+      curl -fsSLo /tmp/k9s.deb "https://github.com/derailed/k9s/releases/download/${K9S_VERSION}/k9s_linux_${k9s_arch}.deb"; \
+      apt-get update; \
+      apt-get install -y --no-install-recommends /tmp/k9s.deb; \
+      rm /tmp/k9s.deb; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+
+RUN git clone --depth 1 https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh
+
+COPY --from=jira-builder /go/bin/jira /usr/local/bin/jira
+COPY templates /opt/work-ubuntu/templates
+COPY bootstrap-work-ubuntu-home /usr/local/bin/bootstrap-work-ubuntu-home
+
+RUN if [ "$INCLUDE_JIRA" != "true" ]; then rm -f /usr/local/bin/jira; fi \
+ && chmod +x /usr/local/bin/bootstrap-work-ubuntu-home \
+ && if [ -f /usr/local/bin/jira ]; then chmod +x /usr/local/bin/jira; fi \
+ && useradd -m -s /usr/bin/zsh -u "$APP_UID" "$APP_USER" \
+ && usermod -aG sudo "$APP_USER" \
+ && install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.claude" "$APP_HOME/.config/opencode" "$APP_HOME/.github" "$APP_HOME/.jira.d" "$APP_HOME/.local/bin" "$APP_HOME/work" \
+ && printf "%s ALL=(ALL) NOPASSWD:ALL\n" "$APP_USER" > "/etc/sudoers.d/$APP_USER" \
+ && chmod 0440 "/etc/sudoers.d/$APP_USER"
+
+CMD ["sleep", "infinity"]

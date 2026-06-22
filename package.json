@@ -1,0 +1,13 @@
+{
+  "name": "container-setup",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "create-container-profile": "./create-profile.mjs"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^7.8.4",
+    "chalk": "^5.4.1",
+    "commander": "^14.0.0"
+  }
+}

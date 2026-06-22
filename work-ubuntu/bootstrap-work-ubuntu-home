@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+user_name="${APP_USER:-elk}"
+user_home="${APP_HOME:-/home/$user_name}"
+profile_prompt="${PROFILE_PROMPT:-$user_name}"
+dotfiles_dir=/mnt/dotfiles
+template_dir=/opt/work-ubuntu/templates
+
+install -d -m 0755 -o "$user_name" -g "$user_name" \
+  "$user_home/.claude" \
+  "$user_home/.config/opencode" \
+  "$user_home/.github" \
+  "$user_home/.jira.d" \
+  "$user_home/.local/bin" \
+  "$user_home/work"
+
+install -m 0644 -o "$user_name" -g "$user_name" "$template_dir/.zshenv" "$user_home/.zshenv"
+install -m 0644 -o "$user_name" -g "$user_name" "$template_dir/.zshrc" "$user_home/.zshrc"
+install -m 0644 -o "$user_name" -g "$user_name" "$template_dir/.bashrc" "$user_home/.bashrc"
+
+printf 'export PROFILE_PROMPT=%q\n' "$profile_prompt" >> "$user_home/.zshenv"
+printf 'export PROFILE_PROMPT=%q\n' "$profile_prompt" >> "$user_home/.bashrc"
+printf 'PROFILE_PROMPT=%q\n' "$profile_prompt" >> "$user_home/.zshrc"
+
+rm -f "$user_home/.gitconfig"
+
+name=
+email=
+
+if [ -f "$dotfiles_dir/.gitconfig" ]; then
+  name="$(git config --file "$dotfiles_dir/.gitconfig" user.name || true)"
+  email="$(git config --file "$dotfiles_dir/.gitconfig" user.email || true)"
+fi
+
+git config --file "$user_home/.gitconfig" core.safecrlf warn
+git config --file "$user_home/.gitconfig" pull.rebase false
+git config --file "$user_home/.gitconfig" merge.conflictStyle zdiff3
+
+if command -v gh >/dev/null 2>&1; then
+  git config --file "$user_home/.gitconfig" credential.helper '!gh auth git-credential'
+fi
+
+if [ -n "$name" ]; then
+  git config --file "$user_home/.gitconfig" user.name "$name"
+fi
+
+if [ -n "$email" ]; then
+  git config --file "$user_home/.gitconfig" user.email "$email"
+fi
+
+if [ -f "$dotfiles_dir/.claude/settings.json" ]; then
+  ln -sfn "$dotfiles_dir/.claude/settings.json" "$user_home/.claude/settings.json"
+fi
+
+if [ -f "$dotfiles_dir/.claude/CLAUDE.md" ]; then
+  ln -sfn "$dotfiles_dir/.claude/CLAUDE.md" "$user_home/.claude/CLAUDE.md"
+fi
+
+if [ -f "$dotfiles_dir/opencode.json" ]; then
+  ln -sfn "$dotfiles_dir/opencode.json" "$user_home/opencode.json"
+fi
+
+if [ -f "$dotfiles_dir/.config/opencode/AGENTS.md" ]; then
+  ln -sfn "$dotfiles_dir/.config/opencode/AGENTS.md" "$user_home/.config/opencode/AGENTS.md"
+fi
+
+if [ -f "$dotfiles_dir/.github/copilot.instructions.md" ]; then
+  ln -sfn "$dotfiles_dir/.github/copilot.instructions.md" "$user_home/.github/copilot.instructions.md"
+fi
+
+chown -R "$user_name:$user_name" "$user_home/.claude" "$user_home/.config" "$user_home/.github" "$user_home/.jira.d" "$user_home/.local" "$user_home/work"
+chown "$user_name:$user_name" "$user_home/.bashrc" "$user_home/.gitconfig" "$user_home/.zshenv" "$user_home/.zshrc" "$user_home"
