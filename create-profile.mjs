@@ -69,59 +69,44 @@ async function copyTemplateProfile(profileDir) {
 async function promptForProfile(defaults) {
   console.log(chalk.cyanBright.bold('\nContainer Profile Setup'));
   console.log(chalk.dim('Create a reusable Apple container profile with your preferred tools.'));
-  console.log(chalk.dim(`Profiles will be stored in ${profilesRoot}`));
+  console.log(chalk.dim(`Profiles are saved in ${profilesRoot}\n`));
 
+  // Essentials — most profiles only need these two answers.
   const profileNameRaw = await input({
-    message: 'Profile directory name',
+    message: 'Profile name',
     default: defaults.profileName
   });
   const profileName = sanitizeName(profileNameRaw);
 
-  const containerName = await input({
-    message: 'Container name',
-    default: profileName
-  });
-
-  const imageName = await input({
-    message: 'Image name',
-    default: `${profileName}:latest`
-  });
-
-  const appUser = await input({
-    message: 'Linux username',
-    default: defaults.appUser
-  });
-
-  const appUid = await input({
-    message: 'Linux uid',
-    default: defaults.appUid
-  });
-
-  const profilePrompt = await input({
-    message: 'Prompt label',
-    default: appUser.toUpperCase()
-  });
-
-  const cpus = await input({
-    message: 'CPUs',
-    default: defaults.cpus
-  });
-
-  const memory = await input({
-    message: 'Memory',
-    default: defaults.memory
-  });
-
-  const dotfilesDir = await input({
-    message: 'Dotfiles directory',
-    default: defaults.dotfilesDir
-  });
-
   const selectedTools = await checkbox({
-    message: 'Select included tool groups',
+    message: 'Tools to include (space to toggle, enter to confirm)',
     choices: toolOptions.map((tool) => ({ ...tool, checked: true })),
     pageSize: toolOptions.length
   });
+
+  // Advanced — sensible defaults are derived from the name; only ask if wanted.
+  const customize = await confirm({
+    message: 'Customize advanced settings (user, CPU, memory, dotfiles)?',
+    default: false
+  });
+
+  let appUser = defaults.appUser;
+  let appUid = defaults.appUid;
+  let containerName = profileName;
+  let imageName = `${profileName}:latest`;
+  let cpus = defaults.cpus;
+  let memory = defaults.memory;
+  let dotfilesDir = defaults.dotfilesDir;
+
+  if (customize) {
+    appUser = await input({ message: 'Linux username', default: appUser });
+    appUid = await input({ message: 'Linux uid', default: appUid });
+    containerName = await input({ message: 'Container name', default: containerName });
+    imageName = await input({ message: 'Image name', default: imageName });
+    cpus = await input({ message: 'CPUs', default: cpus });
+    memory = await input({ message: 'Memory', default: memory });
+    dotfilesDir = await input({ message: 'Dotfiles directory', default: dotfilesDir });
+  }
 
   return {
     profileName,
@@ -129,7 +114,7 @@ async function promptForProfile(defaults) {
     imageName,
     appUser,
     appUid,
-    profilePrompt,
+    profilePrompt: appUser.toUpperCase(),
     cpus,
     memory,
     dotfilesDir,
@@ -219,9 +204,9 @@ async function main() {
     await writeProfileEnv(profileDir, config);
   }
 
-  console.log(chalk.greenBright(`\nCreated profile at ${profileDir}`));
-  console.log(chalk.bold('Build and enter with:'));
-  console.log(chalk.cyan(`  ${path.join(profileDir, 'open.sh')}`));
+  console.log(chalk.greenBright(`\n✓ Created profile "${config.profileName}" at ${profileDir}`));
+  console.log(chalk.bold('\nNext step — build and enter it:'));
+  console.log(chalk.cyan(`  just open ${config.profileName}`));
 }
 
 main().catch((error) => {
