@@ -85,7 +85,7 @@ RUN apt-get update \
  && if [ "$INCLUDE_POSTGRES_CLIENT" = "true" ]; then packages="$packages postgresql-client"; fi \
  && if [ "$INCLUDE_MYSQL_CLIENT" = "true" ]; then packages="$packages default-mysql-client"; fi \
  && if [ "$INCLUDE_REDIS" = "true" ]; then packages="$packages redis-tools"; fi \
- && if [ "$INCLUDE_SSH" = "true" ]; then packages="$packages openssh-server"; fi \
+ && if [ "$INCLUDE_SSH" = "true" ]; then packages="$packages openssh-server netcat-openbsd"; fi \
  && apt-get install -y --no-install-recommends $packages \
  && if apt-cache show eza >/dev/null 2>&1; then apt-get install -y --no-install-recommends eza; fi \
  && if [ "$INCLUDE_BTOP" = "true" ]; then \

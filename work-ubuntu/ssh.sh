@@ -2,7 +2,11 @@
 set -euo pipefail
 
 # Host-side helper: make `ssh <alias>` (and VS Code Remote-SSH) work for this
-# profile. Run with --setup-only to refresh the SSH config without connecting.
+# profile. Run with --setup-only to (re)write the SSH config without connecting.
+#
+# Transport: instead of relying on container IPs or .test DNS (which may not
+# resolve), SSH is tunnelled through `container exec` + netcat. This works
+# regardless of host networking and survives the container's IP changing.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 . "$script_dir/profile.env"
@@ -11,27 +15,18 @@ mode="${1:-connect}"
 
 if [ "${INCLUDE_SSH:-false}" != "true" ]; then
   printf 'SSH is not enabled for profile "%s".\n' "${PROFILE_NAME:-?}" >&2
-  printf 'Re-create it with `just new` and tick "OpenSSH server".\n' >&2
+  printf 'Re-create it with `just new` and answer yes to "Enable SSH access".\n' >&2
   exit 1
 fi
 
 container_name="$CONTAINER_NAME"
 host_alias="${SSH_HOSTNAME:-$PROFILE_NAME}"
 ssh_user="${APP_USER:-elk}"
-# Apple's container runtime resolves each container by name on the .test domain.
-target_host="${container_name}.test"
 
 if ! container inspect "$container_name" >/dev/null 2>&1; then
   printf 'Container not created yet — run: just open %s\n' "$PROFILE_NAME" >&2
   exit 1
 fi
-
-if ! container list -q | grep -Fxq "$container_name"; then
-  container start "$container_name" >/dev/null
-fi
-
-# Make sure sshd is actually listening (idempotent).
-container exec "$container_name" bash -c 'mkdir -p /run/sshd; pgrep -x sshd >/dev/null 2>&1 || /usr/sbin/sshd' || true
 
 # Write a managed, per-alias block into ~/.ssh/config (replacing any previous one).
 ssh_dir="$HOME/.ssh"
@@ -55,15 +50,18 @@ awk -v b="$begin" -v e="$end" '
   cat "$tmp"
   printf '%s\n' "$begin"
   printf 'Host %s\n' "$host_alias"
-  printf '  HostName %s\n' "$target_host"
+  printf '  HostName %s\n' "$container_name"
   printf '  User %s\n' "$ssh_user"
+  # %h is the HostName (the container name). Start it if stopped, then bridge
+  # stdio to the container's sshd over `container exec` + nc.
+  printf '  %s\n' 'ProxyCommand container start %h >/dev/null 2>&1 ; exec container exec -i %h nc 127.0.0.1 22'
   printf '  StrictHostKeyChecking accept-new\n'
   printf '  UserKnownHostsFile %s/known_hosts.warp-zone\n' "$ssh_dir"
   printf '%s\n' "$end"
 } > "$config"
 rm -f "$tmp"
 
-printf 'SSH ready: ssh %s   (%s@%s)\n' "$host_alias" "$ssh_user" "$target_host"
+printf 'SSH ready: ssh %s   (user %s, via container exec)\n' "$host_alias" "$ssh_user"
 printf 'VS Code:   Remote-SSH -> Connect to Host -> %s\n' "$host_alias"
 
 if [ "$mode" != "--setup-only" ]; then
