@@ -7,12 +7,16 @@ import { constants } from 'node:fs';
 import process from 'node:process';
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { input, checkbox, confirm, select } from '@inquirer/prompts';
+import { input, checkbox, confirm, select, Separator } from '@inquirer/prompts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const templateDir = path.join(__dirname, 'work-ubuntu');
 const profilesRoot = path.join(process.env.HOME ?? '', 'container');
+
+// Neutral, minimal default — a fresh Linux box with just the essentials.
+const DEFAULT_PROFILE_NAME = 'dev';
+const ALWAYS_INCLUDED = 'git, ripgrep, jq, fzf, bat, eza, tmux, zsh';
 
 const distroOptions = [
   { name: 'Ubuntu 24.04 LTS', value: 'ubuntu:24.04' },
@@ -21,15 +25,41 @@ const distroOptions = [
 ];
 
 const toolOptions = [
-  { name: 'Node.js, corepack, pnpm, yarn', value: 'INCLUDE_NODE' },
-  { name: '.NET SDK 8 and 10', value: 'INCLUDE_DOTNET' },
-  { name: 'Azure CLI', value: 'INCLUDE_AZURE_CLI' },
-  { name: 'Pulumi CLI', value: 'INCLUDE_PULUMI' },
-  { name: 'kubectl', value: 'INCLUDE_KUBECTL' },
-  { name: 'GitHub CLI', value: 'INCLUDE_GH' },
-  { name: 'jira CLI', value: 'INCLUDE_JIRA' },
-  { name: 'k9s', value: 'INCLUDE_K9S' },
-  { name: 'Python 3', value: 'INCLUDE_PYTHON' }
+  // Languages & runtimes
+  { name: 'Node.js, corepack, pnpm, yarn', value: 'INCLUDE_NODE', group: 'Languages & runtimes' },
+  { name: 'Python 3 (pip, venv)', value: 'INCLUDE_PYTHON', group: 'Languages & runtimes' },
+  { name: 'Go', value: 'INCLUDE_GO', group: 'Languages & runtimes' },
+  { name: 'Rust (rustup, cargo)', value: 'INCLUDE_RUST', group: 'Languages & runtimes' },
+  { name: '.NET SDK 8 and 10', value: 'INCLUDE_DOTNET', group: 'Languages & runtimes' },
+  { name: 'Java (default JDK)', value: 'INCLUDE_JAVA', group: 'Languages & runtimes' },
+  { name: 'Ruby', value: 'INCLUDE_RUBY', group: 'Languages & runtimes' },
+  { name: 'Bun', value: 'INCLUDE_BUN', group: 'Languages & runtimes' },
+  { name: 'Deno', value: 'INCLUDE_DENO', group: 'Languages & runtimes' },
+  // Cloud & infrastructure
+  { name: 'Docker CLI + Compose', value: 'INCLUDE_DOCKER', group: 'Cloud & infrastructure' },
+  { name: 'kubectl', value: 'INCLUDE_KUBECTL', group: 'Cloud & infrastructure' },
+  { name: 'Helm', value: 'INCLUDE_HELM', group: 'Cloud & infrastructure' },
+  { name: 'k9s', value: 'INCLUDE_K9S', group: 'Cloud & infrastructure' },
+  { name: 'Terraform', value: 'INCLUDE_TERRAFORM', group: 'Cloud & infrastructure' },
+  { name: 'Pulumi CLI', value: 'INCLUDE_PULUMI', group: 'Cloud & infrastructure' },
+  { name: 'AWS CLI v2', value: 'INCLUDE_AWS_CLI', group: 'Cloud & infrastructure' },
+  { name: 'Azure CLI', value: 'INCLUDE_AZURE_CLI', group: 'Cloud & infrastructure' },
+  { name: 'Google Cloud CLI', value: 'INCLUDE_GCLOUD', group: 'Cloud & infrastructure' },
+  // Databases
+  { name: 'PostgreSQL client (psql)', value: 'INCLUDE_POSTGRES_CLIENT', group: 'Databases' },
+  { name: 'MySQL / MariaDB client', value: 'INCLUDE_MYSQL_CLIENT', group: 'Databases' },
+  { name: 'Redis CLI', value: 'INCLUDE_REDIS', group: 'Databases' },
+  { name: 'SQLite', value: 'INCLUDE_SQLITE', group: 'Databases' },
+  // CLI utilities
+  { name: 'GitHub CLI', value: 'INCLUDE_GH', group: 'CLI utilities' },
+  { name: 'jira CLI', value: 'INCLUDE_JIRA', group: 'CLI utilities' },
+  { name: 'Neovim', value: 'INCLUDE_NEOVIM', group: 'CLI utilities' },
+  { name: 'lazygit', value: 'INCLUDE_LAZYGIT', group: 'CLI utilities' },
+  { name: 'git-delta', value: 'INCLUDE_DELTA', group: 'CLI utilities' },
+  { name: 'yq', value: 'INCLUDE_YQ', group: 'CLI utilities' },
+  { name: 'direnv', value: 'INCLUDE_DIRENV', group: 'CLI utilities' },
+  { name: 'HTTPie', value: 'INCLUDE_HTTPIE', group: 'CLI utilities' },
+  { name: 'btop', value: 'INCLUDE_BTOP', group: 'CLI utilities' }
 ];
 
 function sanitizeName(value) {
@@ -72,6 +102,26 @@ async function copyTemplateProfile(profileDir) {
   }
 }
 
+function describeTools(selectedTools) {
+  if (selectedTools.length === 0) {
+    return chalk.dim('none — minimal base');
+  }
+  return selectedTools
+    .map((value) => toolOptions.find((tool) => tool.value === value)?.name ?? value)
+    .join(', ');
+}
+
+function summarize(config) {
+  const distro = distroOptions.find((d) => d.value === config.baseImage)?.name ?? config.baseImage;
+  console.log(chalk.bold('\nReview'));
+  console.log(`  ${chalk.dim('Name'.padEnd(8))}${config.profileName}`);
+  console.log(`  ${chalk.dim('Distro'.padEnd(8))}${distro}`);
+  console.log(`  ${chalk.dim('User'.padEnd(8))}${config.appUser}`);
+  console.log(`  ${chalk.dim('CPU/RAM'.padEnd(8))}${config.cpus} / ${config.memory}`);
+  console.log(`  ${chalk.dim('Tools'.padEnd(8))}${describeTools(config.selectedTools)}`);
+  console.log();
+}
+
 async function promptForProfile(defaults) {
   console.log(chalk.cyanBright.bold('\n🌀 warp-zone — new profile'));
   console.log(chalk.dim('Build a reusable Linux dev world with your preferred distro and tools.'));
@@ -90,10 +140,20 @@ async function promptForProfile(defaults) {
     default: defaults.baseImage
   });
 
+  console.log(chalk.dim(`\n  Every profile already ships with: ${ALWAYS_INCLUDED}.`));
+  const toolChoices = [];
+  for (const group of [...new Set(toolOptions.map((tool) => tool.group))]) {
+    toolChoices.push(new Separator(chalk.dim(`— ${group} —`)));
+    for (const tool of toolOptions.filter((tool) => tool.group === group)) {
+      toolChoices.push({ name: tool.name, value: tool.value, checked: false });
+    }
+  }
   const selectedTools = await checkbox({
-    message: 'Tools to include (space to toggle, enter to confirm)',
-    choices: toolOptions.map((tool) => ({ ...tool, checked: true })),
-    pageSize: toolOptions.length
+    message: 'Optional tools — leave empty for a minimal base (space to toggle)',
+    choices: toolChoices,
+    pageSize: 18,
+    required: false,
+    loop: false
   });
 
   // Advanced — sensible defaults are derived from the name; only ask if wanted.
@@ -169,7 +229,7 @@ async function main() {
 
   const options = program.opts();
   const defaults = {
-    profileName: options.dir ?? 'work-ubuntu',
+    profileName: options.dir ?? DEFAULT_PROFILE_NAME,
     baseImage: 'ubuntu:24.04',
     appUser: 'elk',
     appUid: '1001',
@@ -193,10 +253,17 @@ async function main() {
       cpus: defaults.cpus,
       memory: defaults.memory,
       dotfilesDir: defaults.dotfilesDir,
-      selectedTools: toolOptions.map((tool) => tool.value)
+      // Minimal by default — opt into tools explicitly via the wizard.
+      selectedTools: []
     };
   } else {
     config = await promptForProfile(defaults);
+    summarize(config);
+    const proceed = await confirm({ message: `Create profile "${config.profileName}"?`, default: true });
+    if (!proceed) {
+      console.log(chalk.dim('Cancelled.'));
+      process.exit(0);
+    }
   }
 
   await mkdir(profilesRoot, { recursive: true });
@@ -221,8 +288,10 @@ async function main() {
   }
 
   console.log(chalk.greenBright(`\n✓ Created profile "${config.profileName}" at ${profileDir}`));
+  console.log(chalk.dim(`  Tools: ${describeTools(config.selectedTools)}`));
   console.log(chalk.bold('\nNext step — build and enter it:'));
-  console.log(chalk.cyan(`  just open ${config.profileName}`));
+  const openCmd = config.profileName === DEFAULT_PROFILE_NAME ? 'just open' : `just open ${config.profileName}`;
+  console.log(chalk.cyan(`  ${openCmd}`));
 }
 
 main().catch((error) => {

@@ -1,11 +1,11 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-default_profile := "work-ubuntu"
+default_profile := "dev"
 profiles_root := env_var_or_default('HOME', '') + "/container"
 
 default:
 	@printf '\033[1;36m%s\033[0m\n' '🌀 warp-zone'
-	@printf '\033[2m%s\033[0m\n\n' 'Jump from macOS into a Linux world · profiles in ~/container · default: work-ubuntu'
+	@printf '\033[2m%s\033[0m\n\n' 'Jump from macOS into a Linux world · profiles in ~/container · default: dev'
 	@printf '\033[1m%s\033[0m\n' 'Get started'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just new' 'Create a profile (interactive wizard)'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just open [profile]' 'Build (if needed) and enter a profile'
@@ -13,7 +13,8 @@ default:
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just list' 'List your profiles'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just build [profile]' 'Build the image only'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just rebuild [profile]' 'Rebuild image and recreate container'
-	@printf '\n\033[2m%s\033[0m\n' 'Tip: profile defaults to "work-ubuntu" when omitted.'
+	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just update [profile]' 'Update OS packages in a running container'
+	@printf '\n\033[2m%s\033[0m\n' 'Tip: profile defaults to "dev" when omitted.'
 
 alias create-profile := new
 alias create-profile-default := new-default
@@ -33,6 +34,30 @@ open profile=default_profile:
 
 rebuild profile=default_profile:
 	~/container/{{profile}}/rebuild.sh
+
+# Update all OS/apt packages (and rustup, if present) inside a running container.
+# Tools pinned to a version at build time (Go, Bun, Deno, kubectl, …) refresh via `just rebuild`.
+update profile=default_profile:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	env_file="$HOME/container/{{profile}}/profile.env"
+	if [ ! -f "$env_file" ]; then
+	  printf '\033[31mNo such profile: %s\033[0m\n' "{{profile}}" >&2
+	  exit 1
+	fi
+	set -a; . "$env_file"; set +a
+	if ! container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+	  printf 'Container not created yet — run: just open %s\n' "{{profile}}" >&2
+	  exit 1
+	fi
+	if ! container list -q | grep -Fxq "$CONTAINER_NAME"; then
+	  container start "$CONTAINER_NAME" >/dev/null
+	fi
+	printf '\033[1;36m%s\033[0m\n' "Updating OS packages in $CONTAINER_NAME…"
+	container exec "$CONTAINER_NAME" sudo env DEBIAN_FRONTEND=noninteractive bash -c \
+	  'apt-get update && apt-get -y dist-upgrade && apt-get -y autoremove --purge && apt-get clean'
+	container exec "$CONTAINER_NAME" bash -lc 'command -v rustup >/dev/null 2>&1 && rustup update || true'
+	printf '\033[1;32m%s\033[0m\n' "✓ $CONTAINER_NAME is up to date"
 
 list:
 	@mkdir -p ~/container

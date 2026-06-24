@@ -13,18 +13,44 @@ ARG KUBECTL_VERSION=v1.36.2
 ARG K9S_VERSION=v0.51.0
 ARG PNPM_VERSION=10.33.0
 ARG YARN_VERSION=4.9.2
+ARG GO_VERSION=1.24.4
+ARG LAZYGIT_VERSION=0.44.1
+ARG DELTA_VERSION=0.18.2
+ARG YQ_VERSION=v4.44.6
 ARG APP_USER=elk
 ARG APP_UID=1001
 ARG PROFILE_PROMPT=ELK
-ARG INCLUDE_NODE=true
-ARG INCLUDE_DOTNET=true
-ARG INCLUDE_AZURE_CLI=true
-ARG INCLUDE_PULUMI=true
-ARG INCLUDE_KUBECTL=true
-ARG INCLUDE_GH=true
-ARG INCLUDE_JIRA=true
-ARG INCLUDE_K9S=true
-ARG INCLUDE_PYTHON=true
+ARG INCLUDE_NODE=false
+ARG INCLUDE_DOTNET=false
+ARG INCLUDE_AZURE_CLI=false
+ARG INCLUDE_PULUMI=false
+ARG INCLUDE_KUBECTL=false
+ARG INCLUDE_GH=false
+ARG INCLUDE_JIRA=false
+ARG INCLUDE_K9S=false
+ARG INCLUDE_PYTHON=false
+ARG INCLUDE_GO=false
+ARG INCLUDE_RUST=false
+ARG INCLUDE_JAVA=false
+ARG INCLUDE_RUBY=false
+ARG INCLUDE_BUN=false
+ARG INCLUDE_DENO=false
+ARG INCLUDE_DOCKER=false
+ARG INCLUDE_HELM=false
+ARG INCLUDE_TERRAFORM=false
+ARG INCLUDE_AWS_CLI=false
+ARG INCLUDE_GCLOUD=false
+ARG INCLUDE_POSTGRES_CLIENT=false
+ARG INCLUDE_MYSQL_CLIENT=false
+ARG INCLUDE_REDIS=false
+ARG INCLUDE_SQLITE=false
+ARG INCLUDE_NEOVIM=false
+ARG INCLUDE_LAZYGIT=false
+ARG INCLUDE_DELTA=false
+ARG INCLUDE_YQ=false
+ARG INCLUDE_DIRENV=false
+ARG INCLUDE_HTTPIE=false
+ARG INCLUDE_BTOP=false
 
 ENV DEBIAN_FRONTEND=noninteractive \
     APP_USER=${APP_USER} \
@@ -40,13 +66,28 @@ ENV DEBIAN_FRONTEND=noninteractive \
     INCLUDE_JIRA=${INCLUDE_JIRA} \
     INCLUDE_K9S=${INCLUDE_K9S} \
     INCLUDE_PYTHON=${INCLUDE_PYTHON} \
-    PATH=/home/${APP_USER}/.local/bin:/home/${APP_USER}/.dotnet/tools:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+    RUSTUP_HOME=/usr/local/rustup \
+    PATH=/home/${APP_USER}/.local/bin:/home/${APP_USER}/.dotnet/tools:/usr/local/go/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN apt-get update \
- && packages="bash bat build-essential ca-certificates curl file fzf git gnupg jq less lsb-release openssh-client procps sudo tmux unzip vim wget xz-utils zip zsh zsh-autosuggestions zsh-syntax-highlighting" \
+ && apt-get upgrade -y \
+ && packages="bash bat build-essential ca-certificates curl file fzf git gnupg jq less lsb-release openssh-client procps ripgrep sudo tmux unzip vim wget xz-utils zip zsh zsh-autosuggestions zsh-syntax-highlighting" \
  && if [ "$INCLUDE_PYTHON" = "true" ]; then packages="$packages python3 python3-pip python3-venv"; fi \
+ && if [ "$INCLUDE_JAVA" = "true" ]; then packages="$packages default-jdk"; fi \
+ && if [ "$INCLUDE_RUBY" = "true" ]; then packages="$packages ruby-full"; fi \
+ && if [ "$INCLUDE_NEOVIM" = "true" ]; then packages="$packages neovim"; fi \
+ && if [ "$INCLUDE_DIRENV" = "true" ]; then packages="$packages direnv"; fi \
+ && if [ "$INCLUDE_HTTPIE" = "true" ]; then packages="$packages httpie"; fi \
+ && if [ "$INCLUDE_SQLITE" = "true" ]; then packages="$packages sqlite3"; fi \
+ && if [ "$INCLUDE_POSTGRES_CLIENT" = "true" ]; then packages="$packages postgresql-client"; fi \
+ && if [ "$INCLUDE_MYSQL_CLIENT" = "true" ]; then packages="$packages default-mysql-client"; fi \
+ && if [ "$INCLUDE_REDIS" = "true" ]; then packages="$packages redis-tools"; fi \
  && apt-get install -y --no-install-recommends $packages \
  && if apt-cache show eza >/dev/null 2>&1; then apt-get install -y --no-install-recommends eza; fi \
+ && if [ "$INCLUDE_BTOP" = "true" ]; then \
+      if apt-cache show btop >/dev/null 2>&1; then apt-get install -y --no-install-recommends btop; \
+      else apt-get install -y --no-install-recommends htop; fi; \
+    fi \
  && rm -rf /var/lib/apt/lists/*
 
 RUN . /etc/os-release \
@@ -72,6 +113,26 @@ RUN . /etc/os-release \
     fi \
  && if [ "$INCLUDE_DOTNET" = "true" ]; then \
       printf "Types: deb\nURIs: https://packages.microsoft.com/%s/prod\nSuites: %s\nComponents: main\nArchitectures: %s\nSigned-by: /etc/apt/keyrings/microsoft.gpg\n" "$ms_repo" "$codename" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/microsoft-prod.sources; \
+    fi \
+ && if [ "$INCLUDE_DOCKER" = "true" ]; then \
+      curl -fsSL "https://download.docker.com/linux/${ID}/gpg" -o /etc/apt/keyrings/docker.asc; \
+      chmod go+r /etc/apt/keyrings/docker.asc; \
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${ID} ${codename} stable" > /etc/apt/sources.list.d/docker.list; \
+    fi \
+ && if [ "$INCLUDE_TERRAFORM" = "true" ]; then \
+      curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /etc/apt/keyrings/hashicorp.gpg; \
+      chmod go+r /etc/apt/keyrings/hashicorp.gpg; \
+      echo "deb [signed-by=/etc/apt/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com ${codename} main" > /etc/apt/sources.list.d/hashicorp.list; \
+    fi \
+ && if [ "$INCLUDE_GCLOUD" = "true" ]; then \
+      curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /etc/apt/keyrings/cloud-google.gpg; \
+      chmod go+r /etc/apt/keyrings/cloud-google.gpg; \
+      echo "deb [signed-by=/etc/apt/keyrings/cloud-google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list; \
+    fi \
+ && if [ "$INCLUDE_HELM" = "true" ]; then \
+      curl -fsSL https://baltocdn.com/helm/signing.asc | gpg --dearmor -o /etc/apt/keyrings/helm.gpg; \
+      chmod go+r /etc/apt/keyrings/helm.gpg; \
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" > /etc/apt/sources.list.d/helm.list; \
     fi
 
 RUN apt-get update \
@@ -80,6 +141,10 @@ RUN apt-get update \
  && if [ "$INCLUDE_DOTNET" = "true" ]; then packages="$packages dotnet-sdk-8.0 dotnet-sdk-10.0"; fi \
  && if [ "$INCLUDE_GH" = "true" ]; then packages="$packages gh"; fi \
  && if [ "$INCLUDE_NODE" = "true" ]; then packages="$packages nodejs"; fi \
+ && if [ "$INCLUDE_DOCKER" = "true" ]; then packages="$packages docker-ce-cli docker-buildx-plugin docker-compose-plugin"; fi \
+ && if [ "$INCLUDE_TERRAFORM" = "true" ]; then packages="$packages terraform"; fi \
+ && if [ "$INCLUDE_GCLOUD" = "true" ]; then packages="$packages google-cloud-cli"; fi \
+ && if [ "$INCLUDE_HELM" = "true" ]; then packages="$packages helm"; fi \
  && if [ -n "$packages" ]; then apt-get install -y --no-install-recommends $packages; fi \
  && rm -rf /var/lib/apt/lists/*
 
@@ -117,6 +182,70 @@ RUN if [ "$INCLUDE_K9S" = "true" ]; then \
       apt-get install -y --no-install-recommends /tmp/k9s.deb; \
       rm /tmp/k9s.deb; \
       rm -rf /var/lib/apt/lists/*; \
+    fi
+
+RUN if [ "$INCLUDE_GO" = "true" ]; then \
+      arch="$(dpkg --print-architecture)"; \
+      curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz" -o /tmp/go.tar.gz; \
+      rm -rf /usr/local/go; \
+      tar -C /usr/local -xzf /tmp/go.tar.gz; \
+      rm /tmp/go.tar.gz; \
+    fi
+
+RUN if [ "$INCLUDE_RUST" = "true" ]; then \
+      export RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo; \
+      curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable; \
+      chmod -R a+w "$RUSTUP_HOME" "$CARGO_HOME"; \
+    fi
+
+RUN if [ "$INCLUDE_BUN" = "true" ]; then \
+      export BUN_INSTALL=/usr/local; \
+      curl -fsSL https://bun.sh/install | bash; \
+    fi
+
+RUN if [ "$INCLUDE_DENO" = "true" ]; then \
+      export DENO_INSTALL=/usr/local; \
+      curl -fsSL https://deno.land/install.sh | sh; \
+    fi
+
+RUN if [ "$INCLUDE_AWS_CLI" = "true" ]; then \
+      arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        arm64) aws_arch=aarch64 ;; \
+        amd64) aws_arch=x86_64 ;; \
+        *) exit 1 ;; \
+      esac; \
+      curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${aws_arch}.zip" -o /tmp/awscliv2.zip; \
+      unzip -q /tmp/awscliv2.zip -d /tmp; \
+      /tmp/aws/install; \
+      rm -rf /tmp/aws /tmp/awscliv2.zip; \
+    fi
+
+RUN if [ "$INCLUDE_LAZYGIT" = "true" ]; then \
+      arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        arm64) lg_arch=arm64 ;; \
+        amd64) lg_arch=x86_64 ;; \
+        *) exit 1 ;; \
+      esac; \
+      curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${LAZYGIT_VERSION}/lazygit_${LAZYGIT_VERSION}_Linux_${lg_arch}.tar.gz" -o /tmp/lazygit.tar.gz; \
+      tar -C /usr/local/bin -xzf /tmp/lazygit.tar.gz lazygit; \
+      rm /tmp/lazygit.tar.gz; \
+    fi
+
+RUN if [ "$INCLUDE_DELTA" = "true" ]; then \
+      arch="$(dpkg --print-architecture)"; \
+      curl -fsSL "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/git-delta_${DELTA_VERSION}_${arch}.deb" -o /tmp/git-delta.deb; \
+      apt-get update; \
+      apt-get install -y --no-install-recommends /tmp/git-delta.deb; \
+      rm /tmp/git-delta.deb; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+
+RUN if [ "$INCLUDE_YQ" = "true" ]; then \
+      arch="$(dpkg --print-architecture)"; \
+      curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${arch}" -o /usr/local/bin/yq; \
+      chmod +x /usr/local/bin/yq; \
     fi
 
 RUN git clone --depth 1 https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh
