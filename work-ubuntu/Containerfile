@@ -4,7 +4,8 @@ ENV CGO_ENABLED=0 GO111MODULE=on
 
 RUN go install github.com/go-jira/jira/cmd/jira@v1.0.27
 
-FROM ubuntu:24.04
+ARG BASE_IMAGE=ubuntu:24.04
+FROM ${BASE_IMAGE}
 
 ARG NODE_MAJOR=24
 ARG PULUMI_VERSION=3.247.0
@@ -42,12 +43,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/home/${APP_USER}/.local/bin:/home/${APP_USER}/.dotnet/tools:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN apt-get update \
- && packages="bash bat build-essential ca-certificates curl eza file fzf git gnupg jq less lsb-release openssh-client procps sudo tmux unzip vim wget xz-utils zip zsh zsh-autosuggestions zsh-syntax-highlighting" \
+ && packages="bash bat build-essential ca-certificates curl file fzf git gnupg jq less lsb-release openssh-client procps sudo tmux unzip vim wget xz-utils zip zsh zsh-autosuggestions zsh-syntax-highlighting" \
  && if [ "$INCLUDE_PYTHON" = "true" ]; then packages="$packages python3 python3-pip python3-venv"; fi \
  && apt-get install -y --no-install-recommends $packages \
+ && if apt-cache show eza >/dev/null 2>&1; then apt-get install -y --no-install-recommends eza; fi \
  && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /etc/apt/keyrings \
+RUN . /etc/os-release \
+ && codename="${VERSION_CODENAME}" \
+ && ms_repo="${ID}/${VERSION_ID}" \
+ && mkdir -p /etc/apt/keyrings \
  && if [ "$INCLUDE_GH" = "true" ]; then \
       curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
       chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
@@ -63,10 +68,10 @@ RUN mkdir -p /etc/apt/keyrings \
       chmod go+r /etc/apt/keyrings/microsoft.gpg; \
     fi \
  && if [ "$INCLUDE_AZURE_CLI" = "true" ]; then \
-      printf "Types: deb\nURIs: https://packages.microsoft.com/repos/azure-cli/\nSuites: noble\nComponents: main\nArchitectures: %s\nSigned-by: /etc/apt/keyrings/microsoft.gpg\n" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/azure-cli.sources; \
+      printf "Types: deb\nURIs: https://packages.microsoft.com/repos/azure-cli/\nSuites: %s\nComponents: main\nArchitectures: %s\nSigned-by: /etc/apt/keyrings/microsoft.gpg\n" "$codename" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/azure-cli.sources; \
     fi \
  && if [ "$INCLUDE_DOTNET" = "true" ]; then \
-      printf "Types: deb\nURIs: https://packages.microsoft.com/ubuntu/24.04/prod\nSuites: noble\nComponents: main\nArchitectures: %s\nSigned-by: /etc/apt/keyrings/microsoft.gpg\n" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/microsoft-prod.sources; \
+      printf "Types: deb\nURIs: https://packages.microsoft.com/%s/prod\nSuites: %s\nComponents: main\nArchitectures: %s\nSigned-by: /etc/apt/keyrings/microsoft.gpg\n" "$ms_repo" "$codename" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/microsoft-prod.sources; \
     fi
 
 RUN apt-get update \

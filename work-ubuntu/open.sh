@@ -11,6 +11,14 @@ dotfiles_dir="$DOTFILES_DIR"
 cpus="$CPUS"
 memory="$MEMORY"
 
+# "max" (the default) means give the container all host CPU cores and RAM.
+if [ -z "$cpus" ] || [ "$cpus" = "max" ]; then
+  cpus="$(sysctl -n hw.ncpu)"
+fi
+if [ -z "$memory" ] || [ "$memory" = "max" ]; then
+  memory="$(( $(sysctl -n hw.memsize) / 1024 / 1024 / 1024 ))G"
+fi
+
 if [ ! -d "$dotfiles_dir" ]; then
   printf 'Missing dotfiles directory: %s\n' "$dotfiles_dir" >&2
   exit 1
