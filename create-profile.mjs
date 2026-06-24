@@ -53,7 +53,6 @@ const toolOptions = [
   // CLI utilities
   { name: 'GitHub CLI', value: 'INCLUDE_GH', group: 'CLI utilities' },
   { name: 'jira CLI', value: 'INCLUDE_JIRA', group: 'CLI utilities' },
-  { name: 'OpenSSH server (ssh in / VS Code Remote)', value: 'INCLUDE_SSH', group: 'CLI utilities' },
   { name: 'Neovim', value: 'INCLUDE_NEOVIM', group: 'CLI utilities' },
   { name: 'lazygit', value: 'INCLUDE_LAZYGIT', group: 'CLI utilities' },
   { name: 'git-delta', value: 'INCLUDE_DELTA', group: 'CLI utilities' },
@@ -114,6 +113,8 @@ async function copyTemplateProfile(profileDir) {
   }
 }
 
+const LABEL_WIDTH = 10;
+
 function describeTools(selectedTools) {
   if (selectedTools.length === 0) {
     return chalk.dim('none — minimal base');
@@ -132,21 +133,20 @@ function describeDotfiles(config) {
         .map((value) => integrationOptions.find((opt) => opt.value === value)?.name ?? value)
         .join(', ')
     : chalk.dim('mounted, nothing linked');
-  return `${config.dotfilesDir}\n  ${' '.repeat(8)}${chalk.dim('links:')} ${links}`;
+  return `${config.dotfilesDir}\n  ${' '.repeat(LABEL_WIDTH)}${chalk.dim('links:')} ${links}`;
 }
 
 function summarize(config) {
   const distro = distroOptions.find((d) => d.value === config.baseImage)?.name ?? config.baseImage;
+  const label = (text) => chalk.dim(text.padEnd(LABEL_WIDTH));
   console.log(chalk.bold('\nReview'));
-  console.log(`  ${chalk.dim('Name'.padEnd(8))}${config.profileName}`);
-  console.log(`  ${chalk.dim('Distro'.padEnd(8))}${distro}`);
-  console.log(`  ${chalk.dim('User'.padEnd(8))}${config.appUser}`);
-  console.log(`  ${chalk.dim('CPU/RAM'.padEnd(8))}${config.cpus} / ${config.memory}`);
-  console.log(`  ${chalk.dim('Tools'.padEnd(8))}${describeTools(config.selectedTools)}`);
-  console.log(`  ${chalk.dim('Dotfiles'.padEnd(8))}${describeDotfiles(config)}`);
-  if (config.selectedTools.includes('INCLUDE_SSH')) {
-    console.log(`  ${chalk.dim('SSH'.padEnd(8))}ssh ${config.sshHostname || config.profileName}  ${chalk.dim(`(key: ${config.sshPubkey})`)}`);
-  }
+  console.log(`  ${label('Name')}${config.profileName}`);
+  console.log(`  ${label('Distro')}${distro}`);
+  console.log(`  ${label('User')}${config.appUser}`);
+  console.log(`  ${label('CPU/RAM')}${config.cpus} / ${config.memory}`);
+  console.log(`  ${label('Tools')}${describeTools(config.selectedTools)}`);
+  console.log(`  ${label('Dotfiles')}${describeDotfiles(config)}`);
+  console.log(`  ${label('SSH')}${config.sshEnabled ? `ssh ${config.sshHostname || config.profileName}  ${chalk.dim(`(key: ${config.sshPubkey})`)}` : chalk.dim('disabled')}`);
   console.log();
 }
 
@@ -184,13 +184,18 @@ async function promptForProfile(defaults) {
     loop: false
   });
 
-  // SSH access — only ask the follow-up details when the server was selected.
+  // SSH access — a first-class question so it is always discoverable.
+  console.log(
+    chalk.dim('\n  Reach this profile from your Mac with `ssh <alias>` (e.g. VS Code Remote-SSH).')
+  );
+  const sshEnabled = await confirm({
+    message: 'Enable SSH access into this profile?',
+    default: false
+  });
+
   let sshHostname = '';
   let sshPubkey = '';
-  if (selectedTools.includes('INCLUDE_SSH')) {
-    console.log(
-      chalk.dim('\n  Connect from your Mac with `ssh <alias>` (e.g. VS Code Remote-SSH).')
-    );
+  if (sshEnabled) {
     sshHostname = await input({
       message: 'SSH host alias (what you type as `ssh <alias>` on your Mac)',
       default: profileName
@@ -260,6 +265,7 @@ async function promptForProfile(defaults) {
     memory,
     dotfilesDir,
     selectedIntegrations,
+    sshEnabled,
     sshHostname,
     sshPubkey,
     selectedTools
@@ -281,7 +287,8 @@ async function writeProfileEnv(profileDir, config) {
     envLine('MEMORY', config.memory),
     // Empty DOTFILES_DIR means hermetic: no host mount, no dotfiles pulled in.
     envLine('DOTFILES_DIR', config.dotfilesDir),
-    // SSH host alias + the host public key to authorize (used when INCLUDE_SSH is on).
+    // SSH access: install/enable flag, host alias, and the host public key to authorize.
+    envLine('INCLUDE_SSH', config.sshEnabled ? 'true' : 'false'),
     envLine('SSH_HOSTNAME', config.sshHostname),
     envLine('SSH_PUBKEY', config.sshPubkey)
   ];
@@ -336,6 +343,7 @@ async function main() {
       // Minimal and hermetic by default — opt into tools and host dotfiles via the wizard.
       dotfilesDir: '',
       selectedIntegrations: [],
+      sshEnabled: false,
       sshHostname: '',
       sshPubkey: '',
       selectedTools: []
