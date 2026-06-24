@@ -25,6 +25,7 @@ Run `just` to see the menu.
 | `just build [profile]` | Build the image only |
 | `just rebuild [profile]` | Rebuild image and recreate the container |
 | `just update [profile]` | Update OS/apt packages inside a running container |
+| `just update-all` | Update OS/apt packages in every container, in parallel |
 | `just destroy [profile]` | Permanently delete a profile, its container, and image |
 
 `profile` defaults to `dev` when omitted. Profiles are stored in `~/container/<name>`.
@@ -49,7 +50,20 @@ The default is a **minimal base** — leave every tool group unchecked and you g
 - `just update [profile]` upgrades all OS/apt packages (and `rustup`, if present) inside a running container.
 - Tools pinned to a version at build time (Go, Bun, Deno, kubectl, k9s, lazygit, git-delta, yq, AWS CLI) refresh when you `just rebuild`.
 
-By default a profile gets **all host CPU cores and RAM**. Your dotfiles (`~/proj/pers/dotfiles` by default) are mounted read-only at `/mnt/dotfiles`. Work in `~/work` inside the container.
+By default a profile gets **all host CPU cores and RAM**. Work in `~/work` inside the container.
+
+## Host separation
+
+A profile is **hermetic by default** — nothing from your Mac is mounted, and credentials and repos live only inside the container.
+
+The wizard can optionally open one read-only window to the host: pick **"Link host dotfiles"**, choose a directory (default `~/proj/pers/dotfiles`, mounted read-only at `/mnt/dotfiles`), and tick which pieces to bring in:
+
+- **Git identity** — your `user.name` / `user.email`, copied into the container's `~/.gitconfig`.
+- **Claude config** — `settings.json` and `CLAUDE.md`.
+- **opencode config** — `opencode.json` and `AGENTS.md`.
+- **GitHub Copilot instructions** — `copilot.instructions.md`.
+
+Each linked file is a read-only symlink, so the container can never modify your host. Leave the option off and the profile stays completely sealed. (Shell config — `.zshrc` etc. — always comes from the image template, never the host.)
 
 ## Requirements
 
@@ -59,4 +73,4 @@ By default a profile gets **all host CPU cores and RAM**. Your dotfiles (`~/proj
 
 ## Customizing a profile
 
-Need a different user, CPU/memory, or dotfiles path? Choose **advanced settings** in the wizard, or edit `~/container/<name>/profile.env` afterwards and run `just rebuild <name>`. Set `CPUS`/`MEMORY` to `max` for full host resources, or a fixed value like `8` / `16G` to cap them.
+Need a different user, CPU/memory, or host-dotfiles setup? Use the wizard (**advanced settings** for user/CPU/memory; the **"Link host dotfiles"** prompt for `DOTFILES_DIR` and the `LINK_*` toggles), or edit `~/container/<name>/profile.env` afterwards and run `just rebuild <name>`. Set `CPUS`/`MEMORY` to `max` for full host resources, or a fixed value like `8` / `16G` to cap them. Set `DOTFILES_DIR=""` for a fully hermetic profile.

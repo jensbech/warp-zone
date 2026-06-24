@@ -14,6 +14,7 @@ default:
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just build [profile]' 'Build the image only'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just rebuild [profile]' 'Rebuild image and recreate container'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just update [profile]' 'Update OS packages in a running container'
+	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just update-all' 'Update OS packages in every container (parallel)'
 	@printf '  \033[1;31m%-26s\033[0m \033[2m%s\033[0m\n' 'just destroy [profile]' 'Delete a profile, its container, and image'
 	@printf '\n\033[2m%s\033[0m\n' 'Tip: profile defaults to "dev" when omitted.'
 
@@ -60,6 +61,60 @@ update profile=default_profile:
 	  'apt-get update && apt-get -y dist-upgrade && apt-get -y autoremove --purge && apt-get clean'
 	container exec "${CONTAINER_NAME}" bash -lc 'command -v rustup >/dev/null 2>&1 && rustup update || true'
 	printf '\033[1;32m%s is up to date\033[0m\n' "${CONTAINER_NAME}"
+
+# Update OS/apt packages in every profile's container, all in parallel.
+# Output is captured per profile and printed grouped once all finish.
+update-all:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	shopt -s nullglob
+	profiles=()
+	for dir in "$HOME"/container/*/; do
+	  [ -f "$dir/profile.env" ] || continue
+	  profiles+=("$(basename "${dir%/}")")
+	done
+	if [ "${#profiles[@]}" -eq 0 ]; then
+	  printf '\033[2mNo profiles to update.\033[0m\n'
+	  exit 0
+	fi
+	printf '\033[1;36mUpdating %d profile(s) in parallel: %s\033[0m\n' "${#profiles[@]}" "${profiles[*]}"
+	printf '\033[2m(this can take a while; per-profile output appears below as they finish)\033[0m\n'
+	tmpdir="$(mktemp -d)"
+	pids=()
+	for profile in "${profiles[@]}"; do
+	  (
+	    {
+	      set -a; . "$HOME/container/$profile/profile.env"; set +a
+	      if ! container inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
+	        echo "skipped: container not created (run: just open $profile)"
+	        exit 0
+	      fi
+	      if ! container list -q | grep -Fxq "${CONTAINER_NAME}"; then
+	        container start "${CONTAINER_NAME}" >/dev/null
+	      fi
+	      container exec "${CONTAINER_NAME}" sudo env DEBIAN_FRONTEND=noninteractive bash -c \
+	        'apt-get update && apt-get -y dist-upgrade && apt-get -y autoremove --purge && apt-get clean'
+	      container exec "${CONTAINER_NAME}" bash -lc 'command -v rustup >/dev/null 2>&1 && rustup update || true'
+	      echo "done"
+	    } >"$tmpdir/$profile.log" 2>&1
+	  ) &
+	  pids+=("$!")
+	done
+	rc=0
+	for pid in "${pids[@]}"; do
+	  if ! wait "$pid"; then rc=1; fi
+	done
+	for profile in "${profiles[@]}"; do
+	  printf '\n\033[1m=== %s ===\033[0m\n' "$profile"
+	  cat "$tmpdir/$profile.log" 2>/dev/null || true
+	done
+	rm -rf "$tmpdir"
+	if [ "$rc" -eq 0 ]; then
+	  printf '\n\033[1;32mAll profiles processed.\033[0m\n'
+	else
+	  printf '\n\033[33mSome profiles failed - see output above.\033[0m\n' >&2
+	fi
+	exit "$rc"
 
 # Permanently delete a profile and every trace of it: the running container, its
 # image, and the ~/container/<profile> directory. Requires typing the name to confirm.

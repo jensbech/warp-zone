@@ -7,6 +7,12 @@ profile_prompt="${PROFILE_PROMPT:-$user_name}"
 dotfiles_dir=/mnt/dotfiles
 template_dir=/opt/work-ubuntu/templates
 
+# Host integration flags (passed in by open.sh). Default off — hermetic profile.
+link_git_identity="${LINK_GIT_IDENTITY:-false}"
+link_claude="${LINK_CLAUDE:-false}"
+link_opencode="${LINK_OPENCODE:-false}"
+link_copilot="${LINK_COPILOT:-false}"
+
 install -d -m 0755 -o "$user_name" -g "$user_name" \
   "$user_home/.claude" \
   "$user_home/.config/opencode" \
@@ -25,14 +31,16 @@ printf 'PROFILE_PROMPT=%q\n' "$profile_prompt" >> "$user_home/.zshrc"
 
 rm -f "$user_home/.gitconfig"
 
+# Git identity is only pulled from the host when explicitly enabled for this profile.
 name=
 email=
 
-if [ -f "$dotfiles_dir/.gitconfig" ]; then
+if [ "$link_git_identity" = "true" ] && [ -f "$dotfiles_dir/.gitconfig" ]; then
   name="$(git config --file "$dotfiles_dir/.gitconfig" user.name || true)"
   email="$(git config --file "$dotfiles_dir/.gitconfig" user.email || true)"
 fi
 
+# Safe, host-independent git defaults always apply.
 git config --file "$user_home/.gitconfig" core.safecrlf warn
 git config --file "$user_home/.gitconfig" pull.rebase false
 git config --file "$user_home/.gitconfig" merge.conflictStyle zdiff3
@@ -49,25 +57,24 @@ if [ -n "$email" ]; then
   git config --file "$user_home/.gitconfig" user.email "$email"
 fi
 
-if [ -f "$dotfiles_dir/.claude/settings.json" ]; then
-  ln -sfn "$dotfiles_dir/.claude/settings.json" "$user_home/.claude/settings.json"
-fi
+# Link a host dotfile when its integration is enabled and the source exists;
+# otherwise clear any stale symlink left from a previous run.
+link_or_clear() {
+  enabled="$1"
+  src="$2"
+  dst="$3"
+  if [ "$enabled" = "true" ] && [ -f "$src" ]; then
+    ln -sfn "$src" "$dst"
+  elif [ -L "$dst" ]; then
+    rm -f "$dst"
+  fi
+}
 
-if [ -f "$dotfiles_dir/.claude/CLAUDE.md" ]; then
-  ln -sfn "$dotfiles_dir/.claude/CLAUDE.md" "$user_home/.claude/CLAUDE.md"
-fi
-
-if [ -f "$dotfiles_dir/opencode.json" ]; then
-  ln -sfn "$dotfiles_dir/opencode.json" "$user_home/opencode.json"
-fi
-
-if [ -f "$dotfiles_dir/.config/opencode/AGENTS.md" ]; then
-  ln -sfn "$dotfiles_dir/.config/opencode/AGENTS.md" "$user_home/.config/opencode/AGENTS.md"
-fi
-
-if [ -f "$dotfiles_dir/.github/copilot.instructions.md" ]; then
-  ln -sfn "$dotfiles_dir/.github/copilot.instructions.md" "$user_home/.github/copilot.instructions.md"
-fi
+link_or_clear "$link_claude" "$dotfiles_dir/.claude/settings.json" "$user_home/.claude/settings.json"
+link_or_clear "$link_claude" "$dotfiles_dir/.claude/CLAUDE.md" "$user_home/.claude/CLAUDE.md"
+link_or_clear "$link_opencode" "$dotfiles_dir/opencode.json" "$user_home/opencode.json"
+link_or_clear "$link_opencode" "$dotfiles_dir/.config/opencode/AGENTS.md" "$user_home/.config/opencode/AGENTS.md"
+link_or_clear "$link_copilot" "$dotfiles_dir/.github/copilot.instructions.md" "$user_home/.github/copilot.instructions.md"
 
 chown -R "$user_name:$user_name" "$user_home/.claude" "$user_home/.config" "$user_home/.github" "$user_home/.jira.d" "$user_home/.local" "$user_home/work"
 chown "$user_name:$user_name" "$user_home/.bashrc" "$user_home/.gitconfig" "$user_home/.zshenv" "$user_home/.zshrc" "$user_home"
