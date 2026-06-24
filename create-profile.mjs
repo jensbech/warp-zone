@@ -272,7 +272,7 @@ async function main() {
 
   if (await exists(profileDir)) {
     const overwrite = await confirm({
-      message: `Profile directory ${chalk.yellow(config.profileName)} already exists. Overwrite profile.env only?`,
+      message: `Profile ${chalk.yellow(config.profileName)} already exists. Refresh its scripts and settings from the latest template?`,
       default: false
     });
 
@@ -281,6 +281,8 @@ async function main() {
       process.exit(1);
     }
 
+    // Re-copy the template files too, so template fixes reach existing profiles.
+    await copyTemplateProfile(profileDir);
     await writeProfileEnv(profileDir, config);
   } else {
     await copyTemplateProfile(profileDir);
