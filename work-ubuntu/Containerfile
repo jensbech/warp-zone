@@ -53,6 +53,7 @@ ARG INCLUDE_YQ=false
 ARG INCLUDE_DIRENV=false
 ARG INCLUDE_HTTPIE=false
 ARG INCLUDE_BTOP=false
+ARG INCLUDE_SSH=false
 
 ENV DEBIAN_FRONTEND=noninteractive \
     APP_USER=${APP_USER} \
@@ -84,6 +85,7 @@ RUN apt-get update \
  && if [ "$INCLUDE_POSTGRES_CLIENT" = "true" ]; then packages="$packages postgresql-client"; fi \
  && if [ "$INCLUDE_MYSQL_CLIENT" = "true" ]; then packages="$packages default-mysql-client"; fi \
  && if [ "$INCLUDE_REDIS" = "true" ]; then packages="$packages redis-tools"; fi \
+ && if [ "$INCLUDE_SSH" = "true" ]; then packages="$packages openssh-server"; fi \
  && apt-get install -y --no-install-recommends $packages \
  && if apt-cache show eza >/dev/null 2>&1; then apt-get install -y --no-install-recommends eza; fi \
  && if [ "$INCLUDE_BTOP" = "true" ]; then \
@@ -248,6 +250,19 @@ RUN if [ "$INCLUDE_YQ" = "true" ]; then \
       arch="$(dpkg --print-architecture)"; \
       curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${arch}" -o /usr/local/bin/yq; \
       chmod +x /usr/local/bin/yq; \
+    fi
+
+# Key-only SSH: generate host keys and a drop-in that disables password login.
+# The host's public key is injected and sshd is started at runtime (see bootstrap).
+RUN if [ "$INCLUDE_SSH" = "true" ]; then \
+      mkdir -p /run/sshd /etc/ssh/sshd_config.d; \
+      ssh-keygen -A; \
+      printf '%s\n' \
+        'PasswordAuthentication no' \
+        'PubkeyAuthentication yes' \
+        'PermitRootLogin no' \
+        'KbdInteractiveAuthentication no' \
+        > /etc/ssh/sshd_config.d/warp-zone.conf; \
     fi
 
 RUN git clone --depth 1 https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh

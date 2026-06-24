@@ -9,6 +9,7 @@ default:
 	@printf '\033[1m%s\033[0m\n' 'Get started'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just new' 'Create a profile (interactive wizard)'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just open [profile]' 'Build (if needed) and enter a profile'
+	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just ssh [profile]' 'SSH into a profile (if SSH enabled)'
 	@printf '\n\033[1m%s\033[0m\n' 'Manage'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just list' 'List your profiles'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just build [profile]' 'Build the image only'
@@ -37,6 +38,9 @@ open profile=default_profile:
 
 rebuild profile=default_profile:
 	~/container/{{profile}}/rebuild.sh
+
+ssh profile=default_profile:
+	~/container/{{profile}}/ssh.sh
 
 # Update all OS/apt packages (and rustup, if present) inside a running container.
 # Tools pinned to a version at build time (Go, Bun, Deno, kubectl, ...) refresh via `just rebuild`.

@@ -21,6 +21,7 @@ Run `just` to see the menu.
 | --- | --- |
 | `just new` | Create a profile with the setup wizard |
 | `just open [profile]` | Build (if needed) and enter a profile |
+| `just ssh [profile]` | SSH into a profile (when SSH is enabled) |
 | `just list` | List your profiles |
 | `just build [profile]` | Build the image only |
 | `just rebuild [profile]` | Rebuild image and recreate the container |
@@ -64,6 +65,24 @@ The wizard can optionally open one read-only window to the host: pick **"Link ho
 - **GitHub Copilot instructions** — `copilot.instructions.md`.
 
 Each linked file is a read-only symlink, so the container can never modify your host. Leave the option off and the profile stays completely sealed. (Shell config — `.zshrc` etc. — always comes from the image template, never the host.)
+
+## SSH & VS Code Remote
+
+Tick **OpenSSH server** in the wizard to make a profile reachable over SSH. When you enable it, the wizard asks two things:
+
+- **SSH host alias** — what you'll type as `ssh <alias>` on your Mac (defaults to the profile name).
+- **Public key** — a path on your Mac (default `~/.ssh/id_ed25519.pub`); only that key is authorized (password login is disabled).
+
+Then:
+
+```bash
+just open myprofile   # builds, authorizes your key, starts sshd, writes ~/.ssh/config
+just ssh myprofile    # or just: ssh <alias>
+```
+
+`just open` (and `just ssh`) write a managed block into your `~/.ssh/config` pointing the alias at `<container>.test` — Apple's `container` runtime resolves each container by name on the `.test` domain, so the alias keeps working even if the container's IP changes. In **VS Code**, use **Remote-SSH → Connect to Host → `<alias>`**.
+
+> If `<container>.test` doesn't resolve on your macOS version, set up the local resolver once with `container system dns create test`.
 
 ## Requirements
 
