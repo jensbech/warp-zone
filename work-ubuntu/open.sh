@@ -39,6 +39,19 @@ link_claude="${LINK_CLAUDE:-$default_link}"
 link_opencode="${LINK_OPENCODE:-$default_link}"
 link_copilot="${LINK_COPILOT:-$default_link}"
 
+# SSH access: read the host public key so bootstrap can authorize it.
+ssh_enable="${INCLUDE_SSH:-false}"
+ssh_pubkey_path="${SSH_PUBKEY:-}"
+ssh_authorized_key=""
+if [ "$ssh_enable" = "true" ]; then
+  if [ -n "$ssh_pubkey_path" ] && [ -f "$ssh_pubkey_path" ]; then
+    ssh_authorized_key="$(cat "$ssh_pubkey_path")"
+  else
+    printf 'Warning: SSH enabled but public key not found: %s\n' "${ssh_pubkey_path:-<unset>}" >&2
+    printf '         sshd will start, but you will not be able to log in until a key is added.\n' >&2
+  fi
+fi
+
 if ! container list >/dev/null 2>&1; then
   container system start
 fi
@@ -66,5 +79,13 @@ container exec "$container_name" env \
   LINK_CLAUDE="$link_claude" \
   LINK_OPENCODE="$link_opencode" \
   LINK_COPILOT="$link_copilot" \
+  SSH_ENABLE="$ssh_enable" \
+  SSH_AUTHORIZED_KEY="$ssh_authorized_key" \
   /usr/local/bin/bootstrap-work-ubuntu-home
+
+# Write/refresh the host-side SSH config so `ssh <alias>` and VS Code Remote work.
+if [ "$ssh_enable" = "true" ]; then
+  "$script_dir/ssh.sh" --setup-only || true
+fi
+
 container exec -it "$container_name" bash -ic "su - $APP_USER"

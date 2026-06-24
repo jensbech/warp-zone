@@ -53,6 +53,7 @@ const toolOptions = [
   // CLI utilities
   { name: 'GitHub CLI', value: 'INCLUDE_GH', group: 'CLI utilities' },
   { name: 'jira CLI', value: 'INCLUDE_JIRA', group: 'CLI utilities' },
+  { name: 'OpenSSH server (ssh in / VS Code Remote)', value: 'INCLUDE_SSH', group: 'CLI utilities' },
   { name: 'Neovim', value: 'INCLUDE_NEOVIM', group: 'CLI utilities' },
   { name: 'lazygit', value: 'INCLUDE_LAZYGIT', group: 'CLI utilities' },
   { name: 'git-delta', value: 'INCLUDE_DELTA', group: 'CLI utilities' },
@@ -99,6 +100,7 @@ async function copyTemplateProfile(profileDir) {
     'build.sh',
     'open.sh',
     'rebuild.sh',
+    'ssh.sh',
     'README.md'
   ];
 
@@ -142,6 +144,9 @@ function summarize(config) {
   console.log(`  ${chalk.dim('CPU/RAM'.padEnd(8))}${config.cpus} / ${config.memory}`);
   console.log(`  ${chalk.dim('Tools'.padEnd(8))}${describeTools(config.selectedTools)}`);
   console.log(`  ${chalk.dim('Dotfiles'.padEnd(8))}${describeDotfiles(config)}`);
+  if (config.selectedTools.includes('INCLUDE_SSH')) {
+    console.log(`  ${chalk.dim('SSH'.padEnd(8))}ssh ${config.sshHostname || config.profileName}  ${chalk.dim(`(key: ${config.sshPubkey})`)}`);
+  }
   console.log();
 }
 
@@ -178,6 +183,23 @@ async function promptForProfile(defaults) {
     required: false,
     loop: false
   });
+
+  // SSH access — only ask the follow-up details when the server was selected.
+  let sshHostname = '';
+  let sshPubkey = '';
+  if (selectedTools.includes('INCLUDE_SSH')) {
+    console.log(
+      chalk.dim('\n  Connect from your Mac with `ssh <alias>` (e.g. VS Code Remote-SSH).')
+    );
+    sshHostname = await input({
+      message: 'SSH host alias (what you type as `ssh <alias>` on your Mac)',
+      default: profileName
+    });
+    sshPubkey = await input({
+      message: 'Public key to authorize (a path on your Mac)',
+      default: defaults.sshPubkey
+    });
+  }
 
   // Host integration — off by default, so a fresh profile is hermetic.
   console.log(
@@ -238,6 +260,8 @@ async function promptForProfile(defaults) {
     memory,
     dotfilesDir,
     selectedIntegrations,
+    sshHostname,
+    sshPubkey,
     selectedTools
   };
 }
@@ -256,7 +280,10 @@ async function writeProfileEnv(profileDir, config) {
     envLine('CPUS', config.cpus),
     envLine('MEMORY', config.memory),
     // Empty DOTFILES_DIR means hermetic: no host mount, no dotfiles pulled in.
-    envLine('DOTFILES_DIR', config.dotfilesDir)
+    envLine('DOTFILES_DIR', config.dotfilesDir),
+    // SSH host alias + the host public key to authorize (used when INCLUDE_SSH is on).
+    envLine('SSH_HOSTNAME', config.sshHostname),
+    envLine('SSH_PUBKEY', config.sshPubkey)
   ];
 
   for (const integration of integrationOptions) {
@@ -288,7 +315,8 @@ async function main() {
     appUid: '1001',
     cpus: 'max',
     memory: 'max',
-    dotfilesDir: path.join(process.env.HOME ?? '', 'proj/pers/dotfiles')
+    dotfilesDir: path.join(process.env.HOME ?? '', 'proj/pers/dotfiles'),
+    sshPubkey: path.join(process.env.HOME ?? '', '.ssh/id_ed25519.pub')
   };
 
   let config;
@@ -308,6 +336,8 @@ async function main() {
       // Minimal and hermetic by default — opt into tools and host dotfiles via the wizard.
       dotfilesDir: '',
       selectedIntegrations: [],
+      sshHostname: '',
+      sshPubkey: '',
       selectedTools: []
     };
   } else {
