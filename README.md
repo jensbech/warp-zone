@@ -68,21 +68,21 @@ Each linked file is a read-only symlink, so the container can never modify your 
 
 ## SSH & VS Code Remote
 
-Tick **OpenSSH server** in the wizard to make a profile reachable over SSH. When you enable it, the wizard asks two things:
+Answer **yes** to *"Enable SSH access"* in the wizard to make a profile reachable over SSH. It then asks:
 
 - **SSH host alias** — what you'll type as `ssh <alias>` on your Mac (defaults to the profile name).
-- **Public key** — a path on your Mac (default `~/.ssh/id_ed25519.pub`); only that key is authorized (password login is disabled).
+- **Public key** — a path on your Mac (default `~/.ssh/id_ed25519.pub`). If that file doesn't exist, any keys found in `~/.ssh/*.pub` are authorized instead. Password login is always disabled.
 
 Then:
 
 ```bash
-just open myprofile   # builds, authorizes your key, starts sshd, writes ~/.ssh/config
+just open myprofile   # builds, authorizes your key(s), runs sshd, writes ~/.ssh/config
 just ssh myprofile    # or just: ssh <alias>
 ```
 
-`just open` (and `just ssh`) write a managed block into your `~/.ssh/config` pointing the alias at `<container>.test` — Apple's `container` runtime resolves each container by name on the `.test` domain, so the alias keeps working even if the container's IP changes. In **VS Code**, use **Remote-SSH → Connect to Host → `<alias>`**.
+**No host networking, IPs, or DNS required.** The SSH connection is tunnelled through `container exec` (via a `ProxyCommand` in your `~/.ssh/config`), so it works regardless of the container's IP and even cold-starts the container on connect. In **VS Code**, use **Remote-SSH → Connect to Host → `<alias>`**.
 
-> If `<container>.test` doesn't resolve on your macOS version, set up the local resolver once with `container system dns create test`.
+`sshd` runs as part of the container's command, so it comes back automatically whenever the container starts (e.g. after a host reboot). You need a public key on your Mac — if you don't have one, run `ssh-keygen -t ed25519` and re-open the profile.
 
 ## Requirements
 

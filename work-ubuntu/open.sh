@@ -39,7 +39,8 @@ link_claude="${LINK_CLAUDE:-$default_link}"
 link_opencode="${LINK_OPENCODE:-$default_link}"
 link_copilot="${LINK_COPILOT:-$default_link}"
 
-# SSH access: read the host public key so bootstrap can authorize it.
+# SSH access: collect the host public key(s) so bootstrap can authorize them.
+# Prefer the configured key; if it is missing, fall back to any keys in ~/.ssh.
 ssh_enable="${INCLUDE_SSH:-false}"
 ssh_pubkey_path="${SSH_PUBKEY:-}"
 ssh_authorized_key=""
@@ -47,9 +48,33 @@ if [ "$ssh_enable" = "true" ]; then
   if [ -n "$ssh_pubkey_path" ] && [ -f "$ssh_pubkey_path" ]; then
     ssh_authorized_key="$(cat "$ssh_pubkey_path")"
   else
-    printf 'Warning: SSH enabled but public key not found: %s\n' "${ssh_pubkey_path:-<unset>}" >&2
-    printf '         sshd will start, but you will not be able to log in until a key is added.\n' >&2
+    nl=$'\n'
+    for k in "$HOME"/.ssh/*.pub; do
+      [ -f "$k" ] || continue
+      if [ -n "$ssh_authorized_key" ]; then
+        ssh_authorized_key="$ssh_authorized_key$nl$(cat "$k")"
+      else
+        ssh_authorized_key="$(cat "$k")"
+      fi
+    done
+    if [ -n "$ssh_authorized_key" ]; then
+      printf 'Note: %s not found; authorizing existing key(s) in ~/.ssh instead.\n' \
+        "${ssh_pubkey_path:-the configured key}" >&2
+    fi
   fi
+  if [ -z "$ssh_authorized_key" ]; then
+    printf 'Warning: no SSH public key found on the host.\n' >&2
+    printf '         Create one with:  ssh-keygen -t ed25519\n' >&2
+    printf '         then re-run:      just open %s\n' "$PROFILE_NAME" >&2
+  fi
+fi
+
+# When SSH is on, run sshd as part of the container command so it comes back up
+# automatically every time the container starts (e.g. after a host reboot).
+if [ "$ssh_enable" = "true" ]; then
+  run_command=(sh -c 'mkdir -p /run/sshd; /usr/sbin/sshd; exec sleep infinity')
+else
+  run_command=(sleep infinity)
 fi
 
 if ! container list >/dev/null 2>&1; then
@@ -67,7 +92,7 @@ if ! container inspect "$container_name" >/dev/null 2>&1; then
     --memory "$memory" \
     ${mount_args[@]+"${mount_args[@]}"} \
     "$image_name" \
-    sleep infinity
+    "${run_command[@]}"
 fi
 
 if ! container list -q | grep -Fxq "$container_name"; then
