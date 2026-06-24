@@ -62,6 +62,16 @@ const toolOptions = [
   { name: 'btop', value: 'INCLUDE_BTOP', group: 'CLI utilities' }
 ];
 
+// Optional host integrations. All off by default — a fresh profile is hermetic
+// (no host mount). Enabling these bind-mounts a host dotfiles dir read-only and
+// pulls in the selected pieces during bootstrap.
+const integrationOptions = [
+  { name: 'Git identity (user.name / user.email)', value: 'LINK_GIT_IDENTITY' },
+  { name: 'Claude config (settings.json, CLAUDE.md)', value: 'LINK_CLAUDE' },
+  { name: 'opencode config (opencode.json, AGENTS.md)', value: 'LINK_OPENCODE' },
+  { name: 'GitHub Copilot instructions', value: 'LINK_COPILOT' }
+];
+
 function sanitizeName(value) {
   return value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'profile';
 }
@@ -111,6 +121,18 @@ function describeTools(selectedTools) {
     .join(', ');
 }
 
+function describeDotfiles(config) {
+  if (!config.dotfilesDir) {
+    return chalk.dim('none — hermetic (no host mount)');
+  }
+  const links = config.selectedIntegrations.length
+    ? config.selectedIntegrations
+        .map((value) => integrationOptions.find((opt) => opt.value === value)?.name ?? value)
+        .join(', ')
+    : chalk.dim('mounted, nothing linked');
+  return `${config.dotfilesDir}\n  ${' '.repeat(8)}${chalk.dim('links:')} ${links}`;
+}
+
 function summarize(config) {
   const distro = distroOptions.find((d) => d.value === config.baseImage)?.name ?? config.baseImage;
   console.log(chalk.bold('\nReview'));
@@ -119,6 +141,7 @@ function summarize(config) {
   console.log(`  ${chalk.dim('User'.padEnd(8))}${config.appUser}`);
   console.log(`  ${chalk.dim('CPU/RAM'.padEnd(8))}${config.cpus} / ${config.memory}`);
   console.log(`  ${chalk.dim('Tools'.padEnd(8))}${describeTools(config.selectedTools)}`);
+  console.log(`  ${chalk.dim('Dotfiles'.padEnd(8))}${describeDotfiles(config)}`);
   console.log();
 }
 
@@ -156,9 +179,34 @@ async function promptForProfile(defaults) {
     loop: false
   });
 
+  // Host integration — off by default, so a fresh profile is hermetic.
+  console.log(
+    chalk.dim('\n  By default a profile is sealed off from the host. Optionally mount your')
+  );
+  console.log(chalk.dim('  dotfiles read-only to bring in git identity and AI-assistant configs.'));
+  const useDotfiles = await confirm({
+    message: 'Link host dotfiles into this profile?',
+    default: false
+  });
+
+  let dotfilesDir = '';
+  let selectedIntegrations = [];
+  if (useDotfiles) {
+    dotfilesDir = await input({
+      message: 'Dotfiles directory (mounted read-only at /mnt/dotfiles)',
+      default: defaults.dotfilesDir
+    });
+    selectedIntegrations = await checkbox({
+      message: 'What to link from your dotfiles (space to toggle)',
+      choices: integrationOptions.map((opt) => ({ ...opt, checked: true })),
+      pageSize: integrationOptions.length,
+      required: false
+    });
+  }
+
   // Advanced — sensible defaults are derived from the name; only ask if wanted.
   const customize = await confirm({
-    message: 'Customize advanced settings (user, CPU, memory, dotfiles)?',
+    message: 'Customize advanced settings (user, uid, CPU, memory)?',
     default: false
   });
 
@@ -168,7 +216,6 @@ async function promptForProfile(defaults) {
   let imageName = `${profileName}:latest`;
   let cpus = defaults.cpus;
   let memory = defaults.memory;
-  let dotfilesDir = defaults.dotfilesDir;
 
   if (customize) {
     appUser = await input({ message: 'Linux username', default: appUser });
@@ -177,7 +224,6 @@ async function promptForProfile(defaults) {
     imageName = await input({ message: 'Image name', default: imageName });
     cpus = await input({ message: 'CPUs ("max" = all host cores)', default: cpus });
     memory = await input({ message: 'Memory ("max" = all host RAM)', default: memory });
-    dotfilesDir = await input({ message: 'Dotfiles directory', default: dotfilesDir });
   }
 
   return {
@@ -191,12 +237,14 @@ async function promptForProfile(defaults) {
     cpus,
     memory,
     dotfilesDir,
+    selectedIntegrations,
     selectedTools
   };
 }
 
 async function writeProfileEnv(profileDir, config) {
   const enabledTools = new Set(config.selectedTools);
+  const enabledIntegrations = new Set(config.selectedIntegrations);
   const lines = [
     envLine('PROFILE_NAME', config.profileName),
     envLine('CONTAINER_NAME', config.containerName),
@@ -207,8 +255,13 @@ async function writeProfileEnv(profileDir, config) {
     envLine('PROFILE_PROMPT', config.profilePrompt),
     envLine('CPUS', config.cpus),
     envLine('MEMORY', config.memory),
+    // Empty DOTFILES_DIR means hermetic: no host mount, no dotfiles pulled in.
     envLine('DOTFILES_DIR', config.dotfilesDir)
   ];
+
+  for (const integration of integrationOptions) {
+    lines.push(envLine(integration.value, enabledIntegrations.has(integration.value) ? 'true' : 'false'));
+  }
 
   for (const tool of toolOptions) {
     lines.push(envLine(tool.value, enabledTools.has(tool.value) ? 'true' : 'false'));
@@ -222,7 +275,7 @@ async function main() {
 
   program
     .name('warp-zone')
-    .description('Create a reusable Linux dev-environment profile from the work-ubuntu template')
+    .description('Create a reusable, minimal Linux dev-environment profile')
     .option('--dir <name>', 'profile directory name')
     .option('--yes', 'accept defaults where possible')
     .parse(process.argv);
@@ -252,8 +305,9 @@ async function main() {
       profilePrompt: defaults.appUser.toUpperCase(),
       cpus: defaults.cpus,
       memory: defaults.memory,
-      dotfilesDir: defaults.dotfilesDir,
-      // Minimal by default — opt into tools explicitly via the wizard.
+      // Minimal and hermetic by default — opt into tools and host dotfiles via the wizard.
+      dotfilesDir: '',
+      selectedIntegrations: [],
       selectedTools: []
     };
   } else {
