@@ -4,8 +4,8 @@ default_profile := "work-ubuntu"
 profiles_root := env_var_or_default('HOME', '') + "/container"
 
 default:
-	@printf '\033[1;36m%s\033[0m\n' 'Dev container profiles'
-	@printf '\033[2m%s\033[0m\n\n' 'Profiles live in ~/container · default: work-ubuntu'
+	@printf '\033[1;36m%s\033[0m\n' '🌀 warp-zone'
+	@printf '\033[2m%s\033[0m\n\n' 'Jump from macOS into a Linux world · profiles in ~/container · default: work-ubuntu'
 	@printf '\033[1m%s\033[0m\n' 'Get started'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just new' 'Create a profile (interactive wizard)'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just open [profile]' 'Build (if needed) and enter a profile'

@@ -8,6 +8,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 container build \
   --progress plain \
   -t "$IMAGE_NAME" \
+  --build-arg BASE_IMAGE="${BASE_IMAGE:-ubuntu:24.04}" \
   --build-arg APP_USER="$APP_USER" \
   --build-arg APP_UID="$APP_UID" \
   --build-arg PROFILE_PROMPT="$PROFILE_PROMPT" \

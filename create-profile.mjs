@@ -7,12 +7,18 @@ import { constants } from 'node:fs';
 import process from 'node:process';
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { input, checkbox, confirm } from '@inquirer/prompts';
+import { input, checkbox, confirm, select } from '@inquirer/prompts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const templateDir = path.join(__dirname, 'work-ubuntu');
 const profilesRoot = path.join(process.env.HOME ?? '', 'container');
+
+const distroOptions = [
+  { name: 'Ubuntu 24.04 LTS', value: 'ubuntu:24.04' },
+  { name: 'Ubuntu 22.04 LTS', value: 'ubuntu:22.04' },
+  { name: 'Debian 12 (Bookworm)', value: 'debian:12' }
+];
 
 const toolOptions = [
   { name: 'Node.js, corepack, pnpm, yarn', value: 'INCLUDE_NODE' },
@@ -67,8 +73,8 @@ async function copyTemplateProfile(profileDir) {
 }
 
 async function promptForProfile(defaults) {
-  console.log(chalk.cyanBright.bold('\nContainer Profile Setup'));
-  console.log(chalk.dim('Create a reusable Apple container profile with your preferred tools.'));
+  console.log(chalk.cyanBright.bold('\n🌀 warp-zone — new profile'));
+  console.log(chalk.dim('Build a reusable Linux dev world with your preferred distro and tools.'));
   console.log(chalk.dim(`Profiles are saved in ${profilesRoot}\n`));
 
   // Essentials — most profiles only need these two answers.
@@ -77,6 +83,12 @@ async function promptForProfile(defaults) {
     default: defaults.profileName
   });
   const profileName = sanitizeName(profileNameRaw);
+
+  const baseImage = await select({
+    message: 'Base distro',
+    choices: distroOptions,
+    default: defaults.baseImage
+  });
 
   const selectedTools = await checkbox({
     message: 'Tools to include (space to toggle, enter to confirm)',
@@ -103,8 +115,8 @@ async function promptForProfile(defaults) {
     appUid = await input({ message: 'Linux uid', default: appUid });
     containerName = await input({ message: 'Container name', default: containerName });
     imageName = await input({ message: 'Image name', default: imageName });
-    cpus = await input({ message: 'CPUs', default: cpus });
-    memory = await input({ message: 'Memory', default: memory });
+    cpus = await input({ message: 'CPUs ("max" = all host cores)', default: cpus });
+    memory = await input({ message: 'Memory ("max" = all host RAM)', default: memory });
     dotfilesDir = await input({ message: 'Dotfiles directory', default: dotfilesDir });
   }
 
@@ -112,6 +124,7 @@ async function promptForProfile(defaults) {
     profileName,
     containerName,
     imageName,
+    baseImage,
     appUser,
     appUid,
     profilePrompt: appUser.toUpperCase(),
@@ -128,6 +141,7 @@ async function writeProfileEnv(profileDir, config) {
     envLine('PROFILE_NAME', config.profileName),
     envLine('CONTAINER_NAME', config.containerName),
     envLine('IMAGE_NAME', config.imageName),
+    envLine('BASE_IMAGE', config.baseImage),
     envLine('APP_USER', config.appUser),
     envLine('APP_UID', config.appUid),
     envLine('PROFILE_PROMPT', config.profilePrompt),
@@ -147,8 +161,8 @@ async function main() {
   const program = new Command();
 
   program
-    .name('create-container-profile')
-    .description('Create a reusable Apple container profile from the work-ubuntu template')
+    .name('warp-zone')
+    .description('Create a reusable Linux dev-environment profile from the work-ubuntu template')
     .option('--dir <name>', 'profile directory name')
     .option('--yes', 'accept defaults where possible')
     .parse(process.argv);
@@ -156,10 +170,11 @@ async function main() {
   const options = program.opts();
   const defaults = {
     profileName: options.dir ?? 'work-ubuntu',
+    baseImage: 'ubuntu:24.04',
     appUser: 'elk',
     appUid: '1001',
-    cpus: '8',
-    memory: '16G',
+    cpus: 'max',
+    memory: 'max',
     dotfilesDir: path.join(process.env.HOME ?? '', 'proj/pers/dotfiles')
   };
 
@@ -171,6 +186,7 @@ async function main() {
       profileName,
       containerName: profileName,
       imageName: `${profileName}:latest`,
+      baseImage: defaults.baseImage,
       appUser: defaults.appUser,
       appUid: defaults.appUid,
       profilePrompt: defaults.appUser.toUpperCase(),

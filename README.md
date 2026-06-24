@@ -1,6 +1,8 @@
-# Dev container profiles
+# warp-zone 🌀
 
-Spin up isolated Ubuntu dev environments using Apple's [`container`](https://github.com/apple/container) runtime (macOS). Each **profile** is a reusable container with your chosen tools — repos and credentials stay inside it, so your host stays clean.
+Jump from macOS into a Linux dev world. `warp-zone` spins up isolated Linux dev environments using Apple's [`container`](https://github.com/apple/container) runtime — step in on your Mac, pop out in Linux.
+
+Each **profile** is a reusable container with your chosen distro and tools — repos and credentials stay inside it, so your host stays clean.
 
 ## Quick start
 
@@ -27,13 +29,13 @@ Run `just` to see the menu.
 
 ## What's inside
 
-The wizard asks for a name and which tools to include. Available tool groups:
+The wizard asks for a name, a base distro, and which tools to include.
 
-Node.js · .NET SDK · Azure CLI · Pulumi · kubectl · GitHub CLI · jira · k9s · Python 3
+- **Distro:** Ubuntu 24.04 LTS (default), Ubuntu 22.04 LTS, or Debian 12.
+- **Tool groups:** Node.js · .NET SDK · Azure CLI · Pulumi · kubectl · GitHub CLI · jira · k9s · Python 3
+- **Always included:** git, ripgrep, jq, fzf, bat, eza, tmux, zsh.
 
-Always included: git, ripgrep, jq, fzf, bat, eza, tmux, zsh.
-
-Your dotfiles (`~/proj/pers/dotfiles` by default) are mounted read-only at `/mnt/dotfiles`. Work in `~/work` inside the container.
+By default a profile gets **all host CPU cores and RAM**. Your dotfiles (`~/proj/pers/dotfiles` by default) are mounted read-only at `/mnt/dotfiles`. Work in `~/work` inside the container.
 
 ## Requirements
 
@@ -43,4 +45,4 @@ Your dotfiles (`~/proj/pers/dotfiles` by default) are mounted read-only at `/mnt
 
 ## Customizing a profile
 
-Need a different user, CPU/memory, or dotfiles path? Choose **advanced settings** in the wizard, or edit `~/container/<name>/profile.env` afterwards and run `just rebuild <name>`.
+Need a different user, CPU/memory, or dotfiles path? Choose **advanced settings** in the wizard, or edit `~/container/<name>/profile.env` afterwards and run `just rebuild <name>`. Set `CPUS`/`MEMORY` to `max` for full host resources, or a fixed value like `8` / `16G` to cap them.
