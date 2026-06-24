@@ -25,6 +25,7 @@ Run `just` to see the menu.
 | `just build [profile]` | Build the image only |
 | `just rebuild [profile]` | Rebuild image and recreate the container |
 | `just update [profile]` | Update OS/apt packages inside a running container |
+| `just destroy [profile]` | Permanently delete a profile, its container, and image |
 
 `profile` defaults to `dev` when omitted. Profiles are stored in `~/container/<name>`.
 
