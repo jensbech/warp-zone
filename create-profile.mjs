@@ -11,7 +11,7 @@ import { input, checkbox, confirm, select, Separator } from '@inquirer/prompts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const templateDir = path.join(__dirname, 'work-ubuntu');
+const templateDir = path.join(__dirname, 'template');
 const profilesRoot = path.join(process.env.HOME ?? '', 'container');
 
 // Neutral, minimal default — a fresh Linux box with just the essentials.
@@ -95,7 +95,7 @@ async function copyTemplateProfile(profileDir) {
 
   const files = [
     'Containerfile',
-    'bootstrap-work-ubuntu-home',
+    'bootstrap-home',
     'build.sh',
     'open.sh',
     'rebuild.sh',
@@ -231,24 +231,24 @@ async function promptForProfile(defaults) {
     });
   }
 
-  // Advanced — sensible defaults are derived from the name; only ask if wanted.
+  // Advanced — everything here has a sensible default derived from the name, so
+  // most profiles skip it entirely. The container and image names always follow
+  // the profile name; they are not asked.
   const customize = await confirm({
-    message: 'Customize advanced settings (user, uid, CPU, memory)?',
+    message: 'Customize advanced settings (Linux user, CPU, memory)?',
     default: false
   });
 
   let appUser = defaults.appUser;
   let appUid = defaults.appUid;
-  let containerName = profileName;
-  let imageName = `${profileName}:latest`;
+  const containerName = profileName;
+  const imageName = `${profileName}:latest`;
   let cpus = defaults.cpus;
   let memory = defaults.memory;
 
   if (customize) {
-    appUser = await input({ message: 'Linux username', default: appUser });
-    appUid = await input({ message: 'Linux uid', default: appUid });
-    containerName = await input({ message: 'Container name', default: containerName });
-    imageName = await input({ message: 'Image name', default: imageName });
+    appUser = await input({ message: 'Your username inside the container', default: appUser });
+    appUid = await input({ message: 'Linux uid for that user', default: appUid });
     cpus = await input({ message: 'CPUs ("max" = all host cores)', default: cpus });
     memory = await input({ message: 'Memory ("max" = all host RAM)', default: memory });
   }
@@ -318,7 +318,7 @@ async function main() {
   const defaults = {
     profileName: options.dir ?? DEFAULT_PROFILE_NAME,
     baseImage: 'ubuntu:24.04',
-    appUser: 'elk',
+    appUser: 'dev',
     appUid: '1001',
     cpus: 'max',
     memory: 'max',

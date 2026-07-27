@@ -19,9 +19,9 @@ ARG GO_VERSION=1.24.4
 ARG LAZYGIT_VERSION=0.44.1
 ARG DELTA_VERSION=0.18.2
 ARG YQ_VERSION=v4.44.6
-ARG APP_USER=elk
+ARG APP_USER=dev
 ARG APP_UID=1001
-ARG PROFILE_PROMPT=ELK
+ARG PROFILE_PROMPT=DEV
 ARG INCLUDE_NODE=false
 ARG INCLUDE_DOTNET=false
 ARG INCLUDE_AZURE_CLI=false
@@ -268,11 +268,11 @@ RUN if [ "$INCLUDE_SSH" = "true" ]; then \
 RUN git clone --depth 1 https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh
 
 COPY --from=jira-builder /go/bin/jira /usr/local/bin/jira
-COPY templates /opt/work-ubuntu/templates
-COPY bootstrap-work-ubuntu-home /usr/local/bin/bootstrap-work-ubuntu-home
+COPY templates /opt/warp-zone/templates
+COPY bootstrap-home /usr/local/bin/bootstrap-home
 
 RUN if [ "$INCLUDE_JIRA" != "true" ]; then rm -f /usr/local/bin/jira; fi \
- && chmod +x /usr/local/bin/bootstrap-work-ubuntu-home \
+ && chmod +x /usr/local/bin/bootstrap-home \
  && if [ -f /usr/local/bin/jira ]; then chmod +x /usr/local/bin/jira; fi \
  && useradd -m -s /usr/bin/zsh -u "$APP_UID" "$APP_USER" \
  && usermod -aG sudo "$APP_USER" \
