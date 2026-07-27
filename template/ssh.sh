@@ -21,7 +21,20 @@ fi
 
 container_name="$CONTAINER_NAME"
 host_alias="${SSH_HOSTNAME:-$PROFILE_NAME}"
-ssh_user="${APP_USER:-elk}"
+ssh_user="${APP_USER:-dev}"
+ssh_pubkey_path="${SSH_PUBKEY:-}"
+ssh_home="${APP_HOME:-/home/$ssh_user}"
+
+has_ssh_pubkey=false
+if [ -n "$ssh_pubkey_path" ] && [ -f "$ssh_pubkey_path" ]; then
+  has_ssh_pubkey=true
+else
+  for k in "$HOME"/.ssh/*.pub; do
+    [ -f "$k" ] || continue
+    has_ssh_pubkey=true
+    break
+  done
+fi
 
 if ! container inspect "$container_name" >/dev/null 2>&1; then
   printf 'Container not created yet — run: just open %s\n' "$PROFILE_NAME" >&2
@@ -54,7 +67,7 @@ awk -v b="$begin" -v e="$end" '
   printf '  User %s\n' "$ssh_user"
   # %h is the HostName (the container name). Start it if stopped, then bridge
   # stdio to the container's sshd over `container exec` + nc.
-  printf '  %s\n' 'ProxyCommand container start %h >/dev/null 2>&1 ; exec container exec -i %h nc 127.0.0.1 22'
+  printf "  ProxyCommand sh -c 'container start %%h >/dev/null 2>&1; exec container exec -i %%h nc 127.0.0.1 22'\n"
   printf '  StrictHostKeyChecking accept-new\n'
   printf '  UserKnownHostsFile %s/known_hosts.warp-zone\n' "$ssh_dir"
   printf '%s\n' "$end"
@@ -65,5 +78,16 @@ printf 'SSH ready: ssh %s   (user %s, via container exec)\n' "$host_alias" "$ssh
 printf 'VS Code:   Remote-SSH -> Connect to Host -> %s\n' "$host_alias"
 
 if [ "$mode" != "--setup-only" ]; then
+  if [ "$has_ssh_pubkey" != "true" ]; then
+    printf 'No SSH public key found on the host.\n' >&2
+    printf 'Create one with:  ssh-keygen -t ed25519\n' >&2
+    printf 'Then re-run:      just open %s\n' "$PROFILE_NAME" >&2
+    exit 1
+  fi
+  if ! container exec "$container_name" sh -lc "test -s '$ssh_home/.ssh/authorized_keys'"; then
+    printf 'SSH key is not authorized in profile "%s" yet.\n' "$PROFILE_NAME" >&2
+    printf 'Run: just open %s\n' "$PROFILE_NAME" >&2
+    exit 1
+  fi
   exec ssh "$host_alias"
 fi

@@ -106,7 +106,7 @@ container exec "$container_name" env \
   LINK_COPILOT="$link_copilot" \
   SSH_ENABLE="$ssh_enable" \
   SSH_AUTHORIZED_KEY="$ssh_authorized_key" \
-  /usr/local/bin/bootstrap-work-ubuntu-home
+  /usr/local/bin/bootstrap-home
 
 # Write/refresh the host-side SSH config so `ssh <alias>` and VS Code Remote work.
 if [ "$ssh_enable" = "true" ]; then

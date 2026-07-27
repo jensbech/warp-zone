@@ -29,7 +29,9 @@ Run `just` to see the menu.
 | `just update-all` | Update OS/apt packages in every container, in parallel |
 | `just destroy [profile]` | Permanently delete a profile, its container, and image |
 
-`profile` defaults to `dev` when omitted. Profiles are stored in `~/container/<name>`.
+`profile` defaults to `dev` when omitted; each profile lives in `~/container/<name>`.
+
+The profile name is the **only name you pick** — the container, its image, and your Linux username inside it all default to it (so the `dev` profile logs you in as `dev`).
 
 ## What's inside
 

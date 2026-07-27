@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-user_name="${APP_USER:-elk}"
+user_name="${APP_USER:-dev}"
 user_home="${APP_HOME:-/home/$user_name}"
 profile_prompt="${PROFILE_PROMPT:-$user_name}"
 dotfiles_dir=/mnt/dotfiles
-template_dir=/opt/work-ubuntu/templates
+template_dir=/opt/warp-zone/templates
 
 # Host integration flags (passed in by open.sh). Default off — hermetic profile.
 link_git_identity="${LINK_GIT_IDENTITY:-false}"
