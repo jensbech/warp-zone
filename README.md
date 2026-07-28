@@ -24,7 +24,7 @@ Run `just` to see the menu.
 | `just ssh [profile]` | SSH into a profile (when SSH is enabled) |
 | `just list` | List your profiles |
 | `just status [profile]` | Show profile state, resources, SSH, and backup usage |
-| `just manage` | Open an interactive profile manager |
+| `just manage` | Show profiles and common management commands |
 | `just start/stop/restart [profile]` | Control a container without changing its state |
 | `just backup/restore [profile]` | Save or restore the container's `~/work` directory |
 | `just install-global` | Install `warp` so commands work from any directory |
@@ -36,7 +36,7 @@ Run `just` to see the menu.
 
 `profile` defaults to `dev` when omitted; each profile lives in `~/container/<name>`.
 
-After `just install-global`, run `warp open`, `warp manage`, or any other command from anywhere. The installer writes `~/.local/bin/warp` and adds that directory to your shell PATH when needed.
+After `just install-global`, run `warp` for a profile overview and common commands or `warp help` for help. `warp open`, `warp manage`, and every other command work from anywhere. The installer writes `~/.local/bin/warp` and adds that directory to your shell PATH when needed.
 
 The profile name is the **only name you pick** — the container, its image, and your Linux username inside it all default to it (so the `dev` profile logs you in as `dev`).
 
