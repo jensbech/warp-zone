@@ -18,7 +18,7 @@ default:
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just update-all' 'Update OS packages in every container (parallel)'
 	@printf '  \033[1;31m%-26s\033[0m \033[2m%s\033[0m\n' 'just destroy [profile]' 'Delete a profile, its container, and image'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just status [profile]' 'Show profile state and configuration'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just manage' 'Open the interactive profile manager'
+	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just manage' 'Show profiles and common management commands'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just install-global' 'Install the warp command for use anywhere'
 	@printf '\n\033[2m%s\033[0m\n' 'Tip: profile defaults to "dev" when omitted.'
 
@@ -40,6 +40,9 @@ build profile=default_profile:
 	~/container/{{profile}}/build.sh
 
 open profile=default_profile:
+	@if [ ! -d ~/container/{{profile}} ]; then printf 'No profile named "{{profile}}". Run `warp` to see profiles or `warp new` to create one.\n' >&2; exit 1; fi
+	@cp "{{justfile_directory()}}/template/open.sh" ~/container/{{profile}}/open.sh
+	@chmod +x ~/container/{{profile}}/open.sh
 	~/container/{{profile}}/open.sh
 
 rebuild profile=default_profile:

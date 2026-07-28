@@ -99,6 +99,15 @@ if ! container list -q | grep -Fxq "$container_name"; then
   container start "$container_name"
 fi
 
+bootstrap_command=/usr/local/bin/bootstrap-home
+if ! container exec "$container_name" test -x "$bootstrap_command"; then
+  bootstrap_command=/usr/local/bin/bootstrap-work-ubuntu-home
+fi
+if ! container exec "$container_name" test -x "$bootstrap_command"; then
+  printf 'Profile image is missing its bootstrap command. Run: just rebuild %s\n' "$PROFILE_NAME" >&2
+  exit 1
+fi
+
 container exec "$container_name" env \
   LINK_GIT_IDENTITY="$link_git_identity" \
   LINK_CLAUDE="$link_claude" \
@@ -106,11 +115,20 @@ container exec "$container_name" env \
   LINK_COPILOT="$link_copilot" \
   SSH_ENABLE="$ssh_enable" \
   SSH_AUTHORIZED_KEY="$ssh_authorized_key" \
-  /usr/local/bin/bootstrap-home
+  "$bootstrap_command"
 
 # Write/refresh the host-side SSH config so `ssh <alias>` and VS Code Remote work.
 if [ "$ssh_enable" = "true" ]; then
   "$script_dir/ssh.sh" --setup-only || true
 fi
 
+set +e
 container exec -it "$container_name" bash -ic "su - $APP_USER"
+exit_code=$?
+set -e
+
+if [ "$exit_code" -eq 130 ]; then
+  exit 0
+fi
+
+exit "$exit_code"
