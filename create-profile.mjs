@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { access, copyFile, mkdir, writeFile } from 'node:fs/promises';
+import { access, chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { constants } from 'node:fs';
@@ -62,6 +63,15 @@ const toolOptions = [
   { name: 'btop', value: 'INCLUDE_BTOP', group: 'CLI utilities' }
 ];
 
+const presets = [
+  { name: 'Minimal', value: 'minimal', tools: [] },
+  { name: 'Node web app', value: 'node', tools: ['INCLUDE_NODE', 'INCLUDE_GH', 'INCLUDE_DOCKER', 'INCLUDE_POSTGRES_CLIENT'] },
+  { name: 'Python data', value: 'python', tools: ['INCLUDE_PYTHON', 'INCLUDE_SQLITE', 'INCLUDE_HTTPIE'] },
+  { name: 'Cloud and Kubernetes', value: 'cloud', tools: ['INCLUDE_KUBECTL', 'INCLUDE_HELM', 'INCLUDE_K9S', 'INCLUDE_TERRAFORM', 'INCLUDE_PULUMI', 'INCLUDE_AZURE_CLI'] },
+  { name: '.NET', value: 'dotnet', tools: ['INCLUDE_DOTNET', 'INCLUDE_DOCKER'] },
+  { name: 'Custom', value: 'custom', tools: [] }
+];
+
 // Optional host integrations. All off by default — a fresh profile is hermetic
 // (no host mount). Enabling these bind-mounts a host dotfiles dir read-only and
 // pulls in the selected pieces during bootstrap.
@@ -89,9 +99,39 @@ async function exists(targetPath) {
   }
 }
 
+function commandExists(command) {
+  try {
+    execFileSync('which', [command], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function validResources(cpus, memory) {
+  return /^(max|[1-9][0-9]*)$/.test(cpus) && /^(max|[1-9][0-9]*[GM])$/.test(memory);
+}
+
+async function validateConfig(config) {
+  const errors = [];
+  const warnings = [];
+  if (!commandExists('container')) errors.push('Apple\'s container CLI is not installed or not on PATH.');
+  if (!commandExists('just')) errors.push('just is not installed or not on PATH.');
+  if (!validResources(config.cpus, config.memory)) errors.push('CPU must be a positive number or "max"; memory must be like "8G", "512M", or "max".');
+  if (config.dotfilesDir && !(await exists(config.dotfilesDir))) errors.push(`Dotfiles directory does not exist: ${config.dotfilesDir}`);
+  if (config.sshEnabled && config.sshPubkey && !(await exists(config.sshPubkey))) warnings.push(`SSH public key was not found: ${config.sshPubkey}. Existing ~/.ssh/*.pub keys will be tried when opening.`);
+  try {
+    const availableKb = Number(execFileSync('df', ['-k', process.env.HOME ?? '/'], { encoding: 'utf8' }).trim().split('\n').at(-1).trim().split(/\s+/)[3]);
+    if (availableKb < 50 * 1024 * 1024) warnings.push(`Only ${(availableKb / 1024 / 1024).toFixed(1)} GB free on the profile disk; 50 GB or more is recommended.`);
+  } catch {}
+  for (const warning of warnings) console.log(chalk.yellow(`Warning: ${warning}`));
+  if (errors.length) throw new Error(errors.join('\n'));
+}
+
 async function copyTemplateProfile(profileDir) {
   await mkdir(profileDir, { recursive: true });
   await mkdir(path.join(profileDir, 'templates'), { recursive: true });
+  await mkdir(path.join(profileDir, 'lib'), { recursive: true });
 
   const files = [
     'Containerfile',
@@ -110,6 +150,11 @@ async function copyTemplateProfile(profileDir) {
   const templateFiles = ['.bashrc', '.zshenv', '.zshrc'];
   for (const file of templateFiles) {
     await copyFile(path.join(templateDir, 'templates', file), path.join(profileDir, 'templates', file));
+  }
+
+  for (const file of ['helpers.sh', 'backup.sh', 'restore.sh']) {
+    await copyFile(path.join(__dirname, 'lib', file), path.join(profileDir, 'lib', file));
+    await chmod(path.join(profileDir, 'lib', file), 0o755);
   }
 }
 
@@ -162,6 +207,12 @@ async function promptForProfile(defaults) {
   });
   const profileName = sanitizeName(profileNameRaw);
 
+  const preset = await select({
+    message: 'Starting point',
+    choices: presets.map(({ name, value }) => ({ name, value })),
+    default: defaults.preset
+  });
+
   const baseImage = await select({
     message: 'Base distro',
     choices: distroOptions,
@@ -176,9 +227,10 @@ async function promptForProfile(defaults) {
       toolChoices.push({ name: tool.name, value: tool.value, checked: false });
     }
   }
+  const presetTools = presets.find((option) => option.value === preset)?.tools ?? [];
   const selectedTools = await checkbox({
-    message: 'Optional tools — leave empty for a minimal base (space to toggle)',
-    choices: toolChoices,
+    message: 'Optional tools (space to toggle)',
+    choices: toolChoices.map((choice) => choice instanceof Separator ? choice : { ...choice, checked: defaults.selectedTools?.includes(choice.value) || presetTools.includes(choice.value) }),
     pageSize: 18,
     required: false,
     loop: false
@@ -190,7 +242,7 @@ async function promptForProfile(defaults) {
   );
   const sshEnabled = await confirm({
     message: 'Enable SSH access into this profile?',
-    default: false
+    default: defaults.sshEnabled ?? false
   });
 
   let sshHostname = '';
@@ -198,7 +250,7 @@ async function promptForProfile(defaults) {
   if (sshEnabled) {
     sshHostname = await input({
       message: 'SSH host alias (what you type as `ssh <alias>` on your Mac)',
-      default: profileName
+      default: defaults.sshHostname || profileName
     });
     sshPubkey = await input({
       message: 'Public key to authorize (a path on your Mac)',
@@ -213,7 +265,7 @@ async function promptForProfile(defaults) {
   console.log(chalk.dim('  dotfiles read-only to bring in git identity and AI-assistant configs.'));
   const useDotfiles = await confirm({
     message: 'Link host dotfiles into this profile?',
-    default: false
+    default: Boolean(defaults.dotfilesDir)
   });
 
   let dotfilesDir = '';
@@ -225,7 +277,7 @@ async function promptForProfile(defaults) {
     });
     selectedIntegrations = await checkbox({
       message: 'What to link from your dotfiles (space to toggle)',
-      choices: integrationOptions.map((opt) => ({ ...opt, checked: true })),
+      choices: integrationOptions.map((opt) => ({ ...opt, checked: defaults.selectedIntegrations?.includes(opt.value) ?? true })),
       pageSize: integrationOptions.length,
       required: false
     });
@@ -246,12 +298,23 @@ async function promptForProfile(defaults) {
   let cpus = defaults.cpus;
   let memory = defaults.memory;
 
+  const useAllResources = await confirm({
+    message: 'Use all available CPU and memory?',
+    default: cpus === 'max' && memory === 'max'
+  });
+  if (useAllResources) {
+    cpus = 'max';
+    memory = 'max';
+  }
+
   if (customize) {
     appUser = await input({ message: 'Your username inside the container', default: appUser });
     appUid = await input({ message: 'Linux uid for that user', default: appUid });
     cpus = await input({ message: 'CPUs ("max" = all host cores)', default: cpus });
     memory = await input({ message: 'Memory ("max" = all host RAM)', default: memory });
   }
+
+  if (!validResources(cpus, memory)) throw new Error('CPU must be a positive number or "max"; memory must be like "8G", "512M", or "max".');
 
   return {
     profileName,
@@ -312,6 +375,7 @@ async function main() {
     .description('Create a reusable, minimal Linux dev-environment profile')
     .option('--dir <name>', 'profile directory name')
     .option('--yes', 'accept defaults where possible')
+    .option('--configure', 'edit an existing profile')
     .parse(process.argv);
 
   const options = program.opts();
@@ -320,11 +384,36 @@ async function main() {
     baseImage: 'ubuntu:24.04',
     appUser: 'dev',
     appUid: '1001',
-    cpus: 'max',
-    memory: 'max',
+    cpus: '2',
+    memory: '8G',
     dotfilesDir: path.join(process.env.HOME ?? '', 'proj/pers/dotfiles'),
     sshPubkey: path.join(process.env.HOME ?? '', '.ssh/id_ed25519.pub')
   };
+
+  const existingEnv = path.join(profilesRoot, sanitizeName(defaults.profileName), 'profile.env');
+  let existingValues;
+  if (options.configure && !(await exists(existingEnv))) throw new Error(`No such profile: ${defaults.profileName}`);
+  if (options.configure) {
+    const lines = (await readFile(existingEnv, 'utf8')).trim().split('\n');
+    existingValues = Object.fromEntries(lines.map((line) => {
+      const index = line.indexOf('=');
+      return [line.slice(0, index), JSON.parse(line.slice(index + 1))];
+    }));
+    Object.assign(defaults, {
+      profileName: existingValues.PROFILE_NAME,
+      baseImage: existingValues.BASE_IMAGE,
+      appUser: existingValues.APP_USER,
+      appUid: existingValues.APP_UID,
+      cpus: existingValues.CPUS,
+      memory: existingValues.MEMORY,
+      dotfilesDir: existingValues.DOTFILES_DIR,
+      sshPubkey: existingValues.SSH_PUBKEY,
+      sshEnabled: existingValues.INCLUDE_SSH === 'true',
+      sshHostname: existingValues.SSH_HOSTNAME,
+      selectedIntegrations: integrationOptions.filter((option) => existingValues[option.value] === 'true').map((option) => option.value),
+      selectedTools: toolOptions.filter((tool) => existingValues[tool.value] === 'true').map((tool) => tool.value)
+    });
+  }
 
   let config;
 
@@ -358,6 +447,8 @@ async function main() {
     }
   }
 
+  await validateConfig(config);
+
   await mkdir(profilesRoot, { recursive: true });
 
   const profileDir = path.join(profilesRoot, config.profileName);
@@ -386,6 +477,22 @@ async function main() {
   console.log(chalk.bold('\nNext step — build and enter it:'));
   const openCmd = config.profileName === DEFAULT_PROFILE_NAME ? 'just open' : `just open ${config.profileName}`;
   console.log(chalk.cyan(`  ${openCmd}`));
+
+  if (options.configure && existingValues) {
+    const needsRebuild = Object.entries({
+      BASE_IMAGE: config.baseImage,
+      APP_USER: config.appUser,
+      APP_UID: config.appUid,
+      CPUS: config.cpus,
+      MEMORY: config.memory,
+      DOTFILES_DIR: config.dotfilesDir,
+      INCLUDE_SSH: config.sshEnabled ? 'true' : 'false',
+      ...Object.fromEntries(toolOptions.map((tool) => [tool.value, config.selectedTools.includes(tool.value) ? 'true' : 'false']))
+    }).some(([key, value]) => existingValues[key] !== value);
+    if (needsRebuild && await confirm({ message: 'These changes require a rebuild. Rebuild now?', default: false })) {
+      execFileSync(path.join(profileDir, 'rebuild.sh'), { stdio: 'inherit' });
+    }
+  }
 }
 
 main().catch((error) => {

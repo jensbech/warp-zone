@@ -17,6 +17,9 @@ default:
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just update [profile]' 'Update OS packages in a running container'
 	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just update-all' 'Update OS packages in every container (parallel)'
 	@printf '  \033[1;31m%-26s\033[0m \033[2m%s\033[0m\n' 'just destroy [profile]' 'Delete a profile, its container, and image'
+	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just status [profile]' 'Show profile state and configuration'
+	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just manage' 'Open the interactive profile manager'
+	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just install-global' 'Install the warp command for use anywhere'
 	@printf '\n\033[2m%s\033[0m\n' 'Tip: profile defaults to "dev" when omitted.'
 
 alias create-profile := new
@@ -30,6 +33,9 @@ new:
 new-default name:
 	./create-profile.sh --dir {{name}} --yes
 
+configure profile=default_profile:
+	./create-profile.sh --dir {{profile}} --configure
+
 build profile=default_profile:
 	~/container/{{profile}}/build.sh
 
@@ -37,10 +43,65 @@ open profile=default_profile:
 	~/container/{{profile}}/open.sh
 
 rebuild profile=default_profile:
+	@mkdir -p ~/container/{{profile}}/lib
+	@cp "{{justfile_directory()}}/lib/helpers.sh" "{{justfile_directory()}}/lib/backup.sh" "{{justfile_directory()}}/lib/restore.sh" ~/container/{{profile}}/lib/
+	@chmod +x ~/container/{{profile}}/lib/*.sh
 	~/container/{{profile}}/rebuild.sh
+
+start profile=default_profile:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	. "$HOME/container/{{profile}}/profile.env"
+	container start "$CONTAINER_NAME"
+
+stop profile=default_profile:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	. "$HOME/container/{{profile}}/profile.env"
+	container stop "$CONTAINER_NAME"
+
+restart profile=default_profile:
+	just --justfile "{{justfile()}}" stop {{profile}}
+	just --justfile "{{justfile()}}" start {{profile}}
 
 ssh profile=default_profile:
 	~/container/{{profile}}/ssh.sh
+
+status profile='':
+	#!/usr/bin/env bash
+	set -euo pipefail
+	if [ -n '{{profile}}' ]; then
+	  "{{justfile_directory()}}/lib/status.sh" --detail '{{profile}}'
+	else
+	  "{{justfile_directory()}}/lib/status.sh"
+	fi
+
+backup profile=default_profile:
+	"{{justfile_directory()}}/lib/backup.sh" '{{profile}}'
+
+restore profile=default_profile:
+	"{{justfile_directory()}}/lib/restore.sh" '{{profile}}'
+
+manage:
+	"{{justfile_directory()}}/lib/menu.sh"
+
+logs profile=default_profile:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	. "$HOME/container/{{profile}}/profile.env"
+	container logs "$CONTAINER_NAME"
+
+prune:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	printf 'This removes stopped containers and unused images. Profile backups are kept indefinitely. Continue? [y/N] '
+	read -r answer
+	[ "$answer" = y ] || [ "$answer" = Y ] || exit 0
+	container prune
+	container image prune
+
+install-global:
+	"{{justfile_directory()}}/install-warp.sh"
 
 # Update all OS/apt packages (and rustup, if present) inside a running container.
 # Tools pinned to a version at build time (Go, Bun, Deno, kubectl, ...) refresh via `just rebuild`.
@@ -163,15 +224,7 @@ destroy profile=default_profile:
 
 list:
 	@mkdir -p ~/container
-	@found=0; \
-	for dir in ~/container/*/; do \
-	  [ -f "$dir/profile.env" ] || continue; \
-	  found=1; \
-	  printf '\033[1;32m%s\033[0m\n' "$(basename "${dir%/}")"; \
-	done; \
-	if [ "$found" = 0 ]; then \
-	  printf '\033[2m%s\033[0m\n' 'No profiles yet — run: just new'; \
-	fi
+	@"{{justfile_directory()}}/lib/status.sh"
 
 install-deps:
 	npm install

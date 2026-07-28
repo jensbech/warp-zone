@@ -23,6 +23,11 @@ Run `just` to see the menu.
 | `just open [profile]` | Build (if needed) and enter a profile |
 | `just ssh [profile]` | SSH into a profile (when SSH is enabled) |
 | `just list` | List your profiles |
+| `just status [profile]` | Show profile state, resources, SSH, and backup usage |
+| `just manage` | Open an interactive profile manager |
+| `just start/stop/restart [profile]` | Control a container without changing its state |
+| `just backup/restore [profile]` | Save or restore the container's `~/work` directory |
+| `just install-global` | Install `warp` so commands work from any directory |
 | `just build [profile]` | Build the image only |
 | `just rebuild [profile]` | Rebuild image and recreate the container |
 | `just update [profile]` | Update OS/apt packages inside a running container |
@@ -30,6 +35,8 @@ Run `just` to see the menu.
 | `just destroy [profile]` | Permanently delete a profile, its container, and image |
 
 `profile` defaults to `dev` when omitted; each profile lives in `~/container/<name>`.
+
+After `just install-global`, run `warp open`, `warp manage`, or any other command from anywhere. The installer writes `~/.local/bin/warp` and adds that directory to your shell PATH when needed.
 
 The profile name is the **only name you pick** — the container, its image, and your Linux username inside it all default to it (so the `dev` profile logs you in as `dev`).
 
@@ -53,7 +60,11 @@ The default is a **minimal base** — leave every tool group unchecked and you g
 - `just update [profile]` upgrades all OS/apt packages (and `rustup`, if present) inside a running container.
 - Tools pinned to a version at build time (Go, Bun, Deno, kubectl, k9s, lazygit, git-delta, yq, AWS CLI) refresh when you `just rebuild`.
 
-By default a profile gets **all host CPU cores and RAM**. Work in `~/work` inside the container.
+By default a profile gets **2 CPU cores and 8G RAM**. Choose all available resources in the wizard or set `CPUS` / `MEMORY` to `max` when a workload needs more. Work in `~/work` inside the container.
+
+## Backups and rebuilds
+
+`just rebuild` replaces the container, so it offers to back up `~/work` first. Backups are stored indefinitely in `~/container/<name>/backups`. Use `just backup <name>` at any time and `just restore <name>` to replace the profile's `~/work` with a selected backup.
 
 ## Host separation
 
