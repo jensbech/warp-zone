@@ -52,6 +52,22 @@ chmod 600 "$config"
 begin="# >>> warp-zone:${host_alias} >>>"
 end="# <<< warp-zone:${host_alias} <<<"
 
+if grep -Fqx "Host $host_alias" "$config" && ! grep -Fqx "$begin" "$config"; then
+  printf 'SSH alias "%s" is already managed outside warp-zone. Replace it? [y/N] ' "$host_alias"
+  read -r answer
+  if [ "$answer" != y ] && [ "$answer" != Y ]; then
+    printf 'Choose another SSH alias in profile.env, then run: just open %s\n' "$PROFILE_NAME" >&2
+    exit 1
+  fi
+  tmp_unmanaged="$(mktemp)"
+  awk -v alias="$host_alias" '
+    $1 == "Host" && $2 == alias { skip=1; next }
+    skip && $1 == "Host" { skip=0 }
+    !skip { print }
+  ' "$config" > "$tmp_unmanaged"
+  mv "$tmp_unmanaged" "$config"
+fi
+
 tmp="$(mktemp)"
 awk -v b="$begin" -v e="$end" '
   $0==b { skip=1 }
