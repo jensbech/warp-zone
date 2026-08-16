@@ -4,32 +4,7 @@ default_profile := "dev"
 profiles_root := env_var_or_default('HOME', '') + "/container"
 
 default:
-	@printf '\033[1;36m%s\033[0m\n' '🌀 warp-zone'
-	@printf '\033[2m%s\033[0m\n\n' 'Jump from macOS into a Linux world · profiles in ~/container · default: dev'
-	@printf '\033[1m%s\033[0m\n' 'Get started'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just new' 'Create a profile (interactive wizard)'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just open [profile]' 'Build (if needed) and enter a profile'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just ssh [profile]' 'SSH into a profile (if SSH enabled)'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just run <profile> <cmd>' 'Run a one-off command in a profile'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just forward <port> [profile]' 'Forward a container port to localhost (via SSH)'
-	@printf '\n\033[1m%s\033[0m\n' 'Manage'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just list' 'List your profiles'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just status [profile]' 'Show profile state and configuration'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just configure [profile]' 'Change profile settings with the wizard'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just start/stop [profile]' 'Control a container without changing its files'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just backup [profile]' 'Back up ~/work'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just restore [profile]' 'Restore ~/work from a backup'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just build [profile]' 'Build the image only'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just rebuild [profile]' 'Rebuild image and recreate container'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just update [profile]' 'Update OS packages in a running container'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just update-all' 'Update OS packages in every container (parallel)'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just logs [profile]' 'Show a container'"'"'s logs'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just prune' 'Remove stopped containers and unused images'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just doctor' 'Check your setup for problems'
-	@printf '  \033[1;31m%-26s\033[0m \033[2m%s\033[0m\n' 'just destroy [profile]' 'Delete a profile, its container, and image'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just manage' 'Show profiles and common management commands'
-	@printf '  \033[1;32m%-26s\033[0m \033[2m%s\033[0m\n' 'just install-global' 'Install the warp command for use anywhere'
-	@printf '\n\033[2m%s\033[0m\n' 'Tip: profile defaults to "dev" when omitted.'
+	@"{{justfile_directory()}}/lib/menu.sh" just
 
 alias create-profile := new
 alias create-profile-default := new-default
@@ -126,7 +101,7 @@ restore profile=default_profile: (_sync profile)
 	"{{justfile_directory()}}/lib/restore.sh" '{{profile}}'
 
 manage:
-	"{{justfile_directory()}}/lib/menu.sh"
+	@"{{justfile_directory()}}/lib/menu.sh" warp
 
 doctor:
 	"{{justfile_directory()}}/lib/doctor.sh"
