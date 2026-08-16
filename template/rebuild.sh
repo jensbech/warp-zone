@@ -7,7 +7,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 container_name="$CONTAINER_NAME"
 
-"$script_dir/build.sh"
+if [ "${1:-}" != "--skip-build" ]; then
+  "$script_dir/build.sh"
+fi
 
 if container inspect "$container_name" >/dev/null 2>&1; then
   if [ "${BACKUP_ON_REBUILD:-prompt}" = "always" ]; then

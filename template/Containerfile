@@ -3,9 +3,15 @@ ARG BASE_IMAGE=ubuntu:24.04
 
 FROM golang:1.24-bookworm AS jira-builder
 
+ARG INCLUDE_JIRA=false
+
 ENV CGO_ENABLED=0 GO111MODULE=on
 
-RUN go install github.com/go-jira/jira/cmd/jira@v1.0.27
+RUN if [ "$INCLUDE_JIRA" = "true" ]; then \
+      go install github.com/go-jira/jira/cmd/jira@v1.0.27; \
+    else \
+      mkdir -p /go/bin && touch /go/bin/jira; \
+    fi
 
 FROM ${BASE_IMAGE}
 
@@ -76,7 +82,7 @@ RUN apt-get update \
  && apt-get upgrade -y \
  && packages="bash bat build-essential ca-certificates curl file fzf git gnupg jq less lsb-release openssh-client procps ripgrep sudo tmux unzip vim wget xz-utils zip zsh zsh-autosuggestions zsh-syntax-highlighting" \
  && if [ "$INCLUDE_PYTHON" = "true" ]; then packages="$packages python3 python3-pip python3-venv"; fi \
- && if [ "$INCLUDE_JAVA" = "true" ]; then packages="$packages default-jdk"; fi \
+ && if [ "$INCLUDE_JAVA" = "true" ]; then packages="$packages default-jdk-headless"; fi \
  && if [ "$INCLUDE_RUBY" = "true" ]; then packages="$packages ruby-full"; fi \
  && if [ "$INCLUDE_NEOVIM" = "true" ]; then packages="$packages neovim"; fi \
  && if [ "$INCLUDE_DIRENV" = "true" ]; then packages="$packages direnv"; fi \
@@ -265,7 +271,8 @@ RUN if [ "$INCLUDE_SSH" = "true" ]; then \
         > /etc/ssh/sshd_config.d/warp-zone.conf; \
     fi
 
-RUN git clone --depth 1 https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh
+RUN git clone --depth 1 https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh \
+ && rm -rf /opt/oh-my-zsh/.git
 
 COPY --from=jira-builder /go/bin/jira /usr/local/bin/jira
 COPY templates /opt/warp-zone/templates

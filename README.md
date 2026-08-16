@@ -22,16 +22,22 @@ Run `just` to see the menu.
 | `just new` | Create a profile with the setup wizard |
 | `just open [profile]` | Build (if needed) and enter a profile |
 | `just ssh [profile]` | SSH into a profile (when SSH is enabled) |
+| `just run <profile> <cmd>` | Run a one-off command in a profile |
+| `just forward <port> [profile] [local]` | Forward a container port to localhost (needs SSH) |
+| `just doctor` | Check host tools, disk, profiles, and containers for problems |
 | `just list` | List your profiles |
 | `just status [profile]` | Show profile state, resources, SSH, and backup usage |
 | `just manage` | Show profiles and common management commands |
 | `just start/stop/restart [profile]` | Control a container without changing its state |
 | `just backup/restore [profile]` | Save or restore the container's `~/work` directory |
+| `just configure [profile]` | Change a profile's settings with the wizard |
 | `just install-global` | Install `warp` so commands work from any directory |
 | `just build [profile]` | Build the image only |
 | `just rebuild [profile]` | Rebuild image and recreate the container |
-| `just update [profile]` | Update OS/apt packages inside a running container |
+| `just update [profile]` | Update OS/apt packages inside a container |
 | `just update-all` | Update OS/apt packages in every container, in parallel |
+| `just logs [profile]` | Show a container's logs |
+| `just prune` | Remove stopped containers and unused images |
 | `just destroy [profile]` | Permanently delete a profile, its container, and image |
 
 `profile` defaults to `dev` when omitted; each profile lives in `~/container/<name>`.
@@ -64,7 +70,7 @@ By default a profile gets **2 CPU cores and 8G RAM**. Choose all available resou
 
 ## Backups and rebuilds
 
-`just rebuild` replaces the container, so it offers to back up `~/work` first. Backups are stored indefinitely in `~/container/<name>/backups`. Use `just backup <name>` at any time and `just restore <name>` to replace the profile's `~/work` with a selected backup.
+`just rebuild` replaces the container, so it offers to back up `~/work` first. Backups are stored indefinitely in `~/container/<name>/backups`. Use `just backup <name>` at any time and `just restore <name>` to replace the profile's `~/work` with a selected backup. To cap how many backups a profile keeps, set `BACKUP_KEEP=<n>` in its `profile.env` — each new backup then prunes all but the newest *n*.
 
 ## Host separation
 
@@ -77,7 +83,7 @@ The wizard can optionally open one read-only window to the host: pick **"Link ho
 - **opencode config** — `opencode.json` and `AGENTS.md`.
 - **GitHub Copilot instructions** — `copilot.instructions.md`.
 
-Each linked file is a read-only symlink, so the container can never modify your host. Leave the option off and the profile stays completely sealed. (Shell config — `.zshrc` etc. — always comes from the image template, never the host.)
+Each linked file is a read-only symlink, so the container can never modify your host. Leave the option off and the profile stays completely sealed. (Shell config — `.zshrc` etc. — always comes from the image template, never the host. To customize the shell inside a container, put your additions in `~/.zshrc.local` or `~/.bashrc.local` — those survive every re-open, as do any `git config` changes you make inside the container.)
 
 ## SSH & VS Code Remote
 

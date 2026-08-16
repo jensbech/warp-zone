@@ -52,7 +52,10 @@ chmod 600 "$config"
 begin="# >>> warp-zone:${host_alias} >>>"
 end="# <<< warp-zone:${host_alias} <<<"
 
-if grep -Fqx "Host $host_alias" "$config" && ! grep -Fqx "$begin" "$config"; then
+if awk -v alias="$host_alias" '
+  $1 == "Host" { for (i = 2; i <= NF; i++) if ($i == alias) found = 1 }
+  END { exit found ? 0 : 1 }
+' "$config" && ! grep -Fqx "$begin" "$config"; then
   printf 'SSH alias "%s" is already managed outside warp-zone. Replace it? [y/N] ' "$host_alias"
   read -r answer
   if [ "$answer" != y ] && [ "$answer" != Y ]; then
@@ -61,8 +64,15 @@ if grep -Fqx "Host $host_alias" "$config" && ! grep -Fqx "$begin" "$config"; the
   fi
   tmp_unmanaged="$(mktemp)"
   awk -v alias="$host_alias" '
-    $1 == "Host" && $2 == alias { skip=1; next }
-    skip && $1 == "Host" { skip=0 }
+    $1 == "Host" {
+      has = 0
+      for (i = 2; i <= NF; i++) if ($i == alias) has = 1
+      if (!has) { skip = 0; print; next }
+      line = "Host"; kept = 0
+      for (i = 2; i <= NF; i++) if ($i != alias) { line = line " " $i; kept++ }
+      if (kept == 0) { skip = 1; next }
+      skip = 0; print line; next
+    }
     !skip { print }
   ' "$config" > "$tmp_unmanaged"
   mv "$tmp_unmanaged" "$config"
@@ -84,8 +94,9 @@ awk -v b="$begin" -v e="$end" '
   # %h is the HostName (the container name). Start it if stopped, then bridge
   # stdio to the container's sshd over `container exec` + nc.
   printf "  ProxyCommand sh -c 'container start %%h >/dev/null 2>&1; exec container exec -i %%h nc 127.0.0.1 22'\n"
-  printf '  StrictHostKeyChecking accept-new\n'
-  printf '  UserKnownHostsFile %s/known_hosts.warp-zone\n' "$ssh_dir"
+  printf '  StrictHostKeyChecking no\n'
+  printf '  UserKnownHostsFile /dev/null\n'
+  printf '  LogLevel ERROR\n'
   printf '%s\n' "$end"
 } > "$config"
 rm -f "$tmp"

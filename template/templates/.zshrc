@@ -27,9 +27,18 @@ alias pull='git pull'
 alias stash='git stash'
 alias pop='git stash pop'
 alias root='cd $(git rev-parse --show-toplevel)'
-alias cat='batcat'
-alias ll='eza -al --group-directories-first'
-alias l='eza -al --group-directories-first'
+if command -v batcat >/dev/null 2>&1; then
+  alias cat='batcat'
+elif command -v bat >/dev/null 2>&1; then
+  alias cat='bat'
+fi
+if command -v eza >/dev/null 2>&1; then
+  alias ll='eza -al --group-directories-first'
+  alias l='eza -al --group-directories-first'
+else
+  alias ll='ls -al'
+  alias l='ls -al'
+fi
 alias now='TZ=Europe/Oslo date +"%H:%M:%S"'
 alias nowtz='date -u +"%Y-%m-%dT%H:%M:%SZ"'
 
@@ -48,4 +57,8 @@ fi
 
 if command -v jira >/dev/null 2>&1; then
   alias j='jira'
+fi
+
+if [ -f "$HOME/.zshrc.local" ]; then
+  source "$HOME/.zshrc.local"
 fi

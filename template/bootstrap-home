@@ -33,8 +33,6 @@ printf 'export PROFILE_PROMPT=%q\n' "$profile_prompt" >> "$user_home/.zshenv"
 printf 'export PROFILE_PROMPT=%q\n' "$profile_prompt" >> "$user_home/.bashrc"
 printf 'PROFILE_PROMPT=%q\n' "$profile_prompt" >> "$user_home/.zshrc"
 
-rm -f "$user_home/.gitconfig"
-
 # Git identity is only pulled from the host when explicitly enabled for this profile.
 name=
 email=

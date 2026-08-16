@@ -3,6 +3,15 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+no_shell=false
+for arg in "$@"; do
+  if [ "$arg" = "--no-shell" ]; then no_shell=true; fi
+done
+
+while IFS= read -r var; do
+  unset "$var"
+done < <(compgen -v | grep -E '^(INCLUDE_|LINK_|SSH_)' || true)
+
 . "$script_dir/profile.env"
 
 container_name="$CONTAINER_NAME"
@@ -69,13 +78,10 @@ if [ "$ssh_enable" = "true" ]; then
   fi
 fi
 
-# When SSH is on, run sshd as part of the container command so it comes back up
-# automatically every time the container starts (e.g. after a host reboot).
-if [ "$ssh_enable" = "true" ]; then
-  run_command=(sh -c 'mkdir -p /run/sshd; /usr/sbin/sshd; exec sleep infinity')
-else
-  run_command=(sleep infinity)
-fi
+# Every container runs sshd as part of its command when the image has it, so
+# SSH comes back up automatically whenever the container starts (e.g. after a
+# host reboot) — even for profiles that enable SSH after the container exists.
+run_command=(sh -c 'if command -v sshd >/dev/null 2>&1; then mkdir -p /run/sshd; /usr/sbin/sshd; fi; exec sleep infinity')
 
 if ! container list >/dev/null 2>&1; then
   container system start
@@ -99,11 +105,21 @@ if ! container list -q | grep -Fxq "$container_name"; then
   container start "$container_name"
 fi
 
-bootstrap_command=/usr/local/bin/bootstrap-home
-if ! container exec "$container_name" test -x "$bootstrap_command"; then
-  bootstrap_command=/usr/local/bin/bootstrap-work-ubuntu-home
+probe="$(container exec "$container_name" sh -c '
+  if [ -x /usr/sbin/sshd ]; then printf "sshd\n"; fi
+  if [ -x /usr/local/bin/bootstrap-home ]; then printf "bootstrap=/usr/local/bin/bootstrap-home\n"
+  elif [ -x /usr/local/bin/bootstrap-work-ubuntu-home ]; then printf "bootstrap=/usr/local/bin/bootstrap-work-ubuntu-home\n"
+  fi
+' || true)"
+
+if [ "$ssh_enable" = "true" ] && ! printf '%s\n' "$probe" | grep -qx 'sshd'; then
+  printf 'Warning: SSH is enabled in profile.env but this image was built without it.\n' >&2
+  printf '         Run: just rebuild %s\n' "$PROFILE_NAME" >&2
+  ssh_enable=false
 fi
-if ! container exec "$container_name" test -x "$bootstrap_command"; then
+
+bootstrap_command="$(printf '%s\n' "$probe" | sed -n 's/^bootstrap=//p')"
+if [ -z "$bootstrap_command" ]; then
   printf 'Profile image is missing its bootstrap command. Run: just rebuild %s\n' "$PROFILE_NAME" >&2
   exit 1
 fi
@@ -122,8 +138,12 @@ if [ "$ssh_enable" = "true" ]; then
   "$script_dir/ssh.sh" --setup-only || true
 fi
 
+if [ "$no_shell" = "true" ]; then
+  exit 0
+fi
+
 set +e
-container exec -it "$container_name" bash -ic "su - $APP_USER"
+container exec -it "$container_name" su - "$APP_USER"
 exit_code=$?
 set -e
 
