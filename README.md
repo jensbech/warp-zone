@@ -27,7 +27,7 @@ Run `just` to see the menu.
 | `just doctor` | Check host tools, disk, profiles, and containers for problems |
 | `just list` | List your profiles |
 | `just status [profile]` | Show profile state, resources, SSH, and backup usage |
-| `just manage` | Show profiles and common management commands |
+| `just` / `warp` | Show your profiles and all commands |
 | `just start/stop/restart [profile]` | Control a container without changing its state |
 | `just backup/restore [profile]` | Save or restore the container's `~/work` directory |
 | `just configure [profile]` | Change a profile's settings with the wizard |
