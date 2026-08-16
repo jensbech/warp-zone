@@ -28,4 +28,7 @@ printf '  warp rebuild [profile]      Recreate from its image, with backup promp
 
 printf '\n%bConnect%b\n' "$green" "$reset"
 printf '  warp ssh [profile]    Connect with SSH or VS Code Remote-SSH\n'
+printf '  warp run <profile> <cmd>      Run a one-off command in a profile\n'
+printf '  warp forward <port> [profile] Forward a container port to localhost\n'
+printf '  warp doctor           Check your setup for problems\n'
 printf '\n%bRun `warp help` for all common commands. Profiles default to `dev`.%b\n' "$dim" "$reset"

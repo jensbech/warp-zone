@@ -3,6 +3,10 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+while IFS= read -r var; do
+  unset "$var"
+done < <(compgen -v | grep '^INCLUDE_' || true)
+
 set -a
 . "$script_dir/profile.env"
 set +a

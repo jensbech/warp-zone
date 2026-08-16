@@ -86,8 +86,39 @@ function sanitizeName(value) {
   return value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'profile';
 }
 
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
 function envLine(key, value) {
-  return `${key}=${JSON.stringify(value)}`;
+  return `${key}=${shellQuote(value)}`;
+}
+
+function parseEnvValue(raw) {
+  const trimmed = raw.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1).replace(/'\\''/g, "'");
+  }
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return trimmed.slice(1, -1);
+    }
+  }
+  return trimmed;
+}
+
+function parseEnvFile(content) {
+  const entries = [];
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const index = line.indexOf('=');
+    if (index === -1) continue;
+    entries.push([line.slice(0, index), parseEnvValue(line.slice(index + 1))]);
+  }
+  return entries;
 }
 
 async function exists(targetPath) {
@@ -286,11 +317,6 @@ async function promptForProfile(defaults) {
   // Advanced — everything here has a sensible default derived from the name, so
   // most profiles skip it entirely. The container and image names always follow
   // the profile name; they are not asked.
-  const customize = await confirm({
-    message: 'Customize advanced settings (Linux user, CPU, memory)?',
-    default: false
-  });
-
   let appUser = defaults.appUser;
   let appUid = defaults.appUid;
   const containerName = profileName;
@@ -306,6 +332,11 @@ async function promptForProfile(defaults) {
     cpus = 'max';
     memory = 'max';
   }
+
+  const customize = await confirm({
+    message: 'Customize advanced settings (Linux user, CPU, memory)?',
+    default: false
+  });
 
   if (customize) {
     appUser = await input({ message: 'Your username inside the container', default: appUser });
@@ -364,7 +395,15 @@ async function writeProfileEnv(profileDir, config) {
     lines.push(envLine(tool.value, enabledTools.has(tool.value) ? 'true' : 'false'));
   }
 
-  await writeFile(path.join(profileDir, 'profile.env'), `${lines.join('\n')}\n`);
+  const envPath = path.join(profileDir, 'profile.env');
+  if (await exists(envPath)) {
+    const knownKeys = new Set(lines.map((line) => line.slice(0, line.indexOf('='))));
+    for (const [key, value] of parseEnvFile(await readFile(envPath, 'utf8'))) {
+      if (!knownKeys.has(key)) lines.push(envLine(key, value));
+    }
+  }
+
+  await writeFile(envPath, `${lines.join('\n')}\n`);
 }
 
 async function main() {
@@ -394,11 +433,7 @@ async function main() {
   let existingValues;
   if (options.configure && !(await exists(existingEnv))) throw new Error(`No such profile: ${defaults.profileName}`);
   if (options.configure) {
-    const lines = (await readFile(existingEnv, 'utf8')).trim().split('\n');
-    existingValues = Object.fromEntries(lines.map((line) => {
-      const index = line.indexOf('=');
-      return [line.slice(0, index), JSON.parse(line.slice(index + 1))];
-    }));
+    existingValues = Object.fromEntries(parseEnvFile(await readFile(existingEnv, 'utf8')));
     Object.assign(defaults, {
       profileName: existingValues.PROFILE_NAME,
       baseImage: existingValues.BASE_IMAGE,
@@ -430,16 +465,19 @@ async function main() {
       cpus: defaults.cpus,
       memory: defaults.memory,
       // Minimal and hermetic by default — opt into tools and host dotfiles via the wizard.
-      dotfilesDir: '',
-      selectedIntegrations: [],
-      sshEnabled: false,
-      sshHostname: '',
-      sshPubkey: '',
-      selectedTools: []
+      dotfilesDir: options.configure ? (defaults.dotfilesDir ?? '') : '',
+      selectedIntegrations: options.configure ? (defaults.selectedIntegrations ?? []) : [],
+      sshEnabled: options.configure ? (defaults.sshEnabled ?? false) : false,
+      sshHostname: options.configure ? (defaults.sshHostname ?? '') : '',
+      sshPubkey: options.configure ? (defaults.sshPubkey ?? '') : '',
+      selectedTools: options.configure ? (defaults.selectedTools ?? []) : []
     };
   } else {
     config = await promptForProfile(defaults);
     summarize(config);
+    if (options.configure && existingValues && config.profileName !== existingValues.PROFILE_NAME) {
+      console.log(chalk.yellow(`Note: renaming creates a new profile "${config.profileName}" — the existing "${existingValues.PROFILE_NAME}" profile, container, and image are left untouched. Remove them with: just destroy ${existingValues.PROFILE_NAME}`));
+    }
     const proceed = await confirm({ message: `Create profile "${config.profileName}"?`, default: true });
     if (!proceed) {
       console.log(chalk.dim('Cancelled.'));
@@ -454,7 +492,7 @@ async function main() {
   const profileDir = path.join(profilesRoot, config.profileName);
 
   if (await exists(profileDir)) {
-    const overwrite = await confirm({
+    const overwrite = options.configure || await confirm({
       message: `Profile ${chalk.yellow(config.profileName)} already exists. Refresh its scripts and settings from the latest template?`,
       default: false
     });
@@ -478,19 +516,37 @@ async function main() {
   const openCmd = config.profileName === DEFAULT_PROFILE_NAME ? 'just open' : `just open ${config.profileName}`;
   console.log(chalk.cyan(`  ${openCmd}`));
 
-  if (options.configure && existingValues) {
-    const needsRebuild = Object.entries({
+  if (options.configure && existingValues && config.profileName === existingValues.PROFILE_NAME) {
+    const changed = (entries) => Object.entries(entries).some(([key, value]) => existingValues[key] !== value);
+    const needsImageRebuild = changed({
       BASE_IMAGE: config.baseImage,
       APP_USER: config.appUser,
       APP_UID: config.appUid,
-      CPUS: config.cpus,
-      MEMORY: config.memory,
-      DOTFILES_DIR: config.dotfilesDir,
       INCLUDE_SSH: config.sshEnabled ? 'true' : 'false',
       ...Object.fromEntries(toolOptions.map((tool) => [tool.value, config.selectedTools.includes(tool.value) ? 'true' : 'false']))
-    }).some(([key, value]) => existingValues[key] !== value);
-    if (needsRebuild && await confirm({ message: 'These changes require a rebuild. Rebuild now?', default: false })) {
-      execFileSync(path.join(profileDir, 'rebuild.sh'), { stdio: 'inherit' });
+    });
+    const needsRecreate = changed({
+      CPUS: config.cpus,
+      MEMORY: config.memory,
+      DOTFILES_DIR: config.dotfilesDir
+    });
+    if (needsImageRebuild) {
+      if (await confirm({ message: 'These changes require an image rebuild. Rebuild now?', default: false })) {
+        execFileSync(path.join(profileDir, 'rebuild.sh'), [], { stdio: 'inherit' });
+      }
+    } else if (needsRecreate) {
+      if (await confirm({ message: 'These changes only require recreating the container (no image rebuild). Recreate now?', default: false })) {
+        execFileSync(path.join(profileDir, 'rebuild.sh'), ['--skip-build'], { stdio: 'inherit' });
+      }
+    } else {
+      const runtimeChanged = changed({
+        SSH_HOSTNAME: config.sshHostname,
+        SSH_PUBKEY: config.sshPubkey,
+        ...Object.fromEntries(integrationOptions.map((opt) => [opt.value, config.selectedIntegrations.includes(opt.value) ? 'true' : 'false']))
+      });
+      if (runtimeChanged) {
+        console.log(chalk.dim(`Settings saved — they take effect on the next \`just open ${config.profileName}\`.`));
+      }
     }
   }
 }
