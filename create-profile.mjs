@@ -86,6 +86,10 @@ function sanitizeName(value) {
   return value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'profile';
 }
 
+function sanitizeUser(value) {
+  return value.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^[^a-z_]+/, '').replace(/-+$/, '') || 'dev';
+}
+
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
@@ -317,7 +321,7 @@ async function promptForProfile(defaults) {
   // Advanced — everything here has a sensible default derived from the name, so
   // most profiles skip it entirely. The container and image names always follow
   // the profile name; they are not asked.
-  let appUser = defaults.appUser;
+  let appUser = defaults.appUser ?? sanitizeUser(profileName);
   let appUid = defaults.appUid;
   const containerName = profileName;
   const imageName = `${profileName}:latest`;
@@ -339,7 +343,7 @@ async function promptForProfile(defaults) {
   });
 
   if (customize) {
-    appUser = await input({ message: 'Your username inside the container', default: appUser });
+    appUser = sanitizeUser(await input({ message: 'Your username inside the container', default: appUser }));
     appUid = await input({ message: 'Linux uid for that user', default: appUid });
     cpus = await input({ message: 'CPUs ("max" = all host cores)', default: cpus });
     memory = await input({ message: 'Memory ("max" = all host RAM)', default: memory });
@@ -421,7 +425,6 @@ async function main() {
   const defaults = {
     profileName: options.dir ?? DEFAULT_PROFILE_NAME,
     baseImage: 'ubuntu:24.04',
-    appUser: 'dev',
     appUid: '1001',
     cpus: '2',
     memory: '8G',
@@ -454,14 +457,15 @@ async function main() {
 
   if (options.yes) {
     const profileName = sanitizeName(defaults.profileName);
+    const appUser = defaults.appUser ?? sanitizeUser(profileName);
     config = {
       profileName,
       containerName: profileName,
       imageName: `${profileName}:latest`,
       baseImage: defaults.baseImage,
-      appUser: defaults.appUser,
+      appUser,
       appUid: defaults.appUid,
-      profilePrompt: defaults.appUser.toUpperCase(),
+      profilePrompt: appUser.toUpperCase(),
       cpus: defaults.cpus,
       memory: defaults.memory,
       // Minimal and hermetic by default — opt into tools and host dotfiles via the wizard.
