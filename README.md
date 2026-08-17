@@ -20,6 +20,10 @@ Run `just` to see the menu.
 | Command | What it does |
 | --- | --- |
 | `just new` | Create a profile with the setup wizard |
+| `just up <recipe> [name]` | Create a profile from a recipe (if needed) and enter it |
+| `just new-from <recipe> [name]` | Create a profile from a saved recipe (without entering) |
+| `just recipes` | List saved recipes |
+| `just save [profile] [recipe]` | Save a profile's setup as a recipe |
 | `just open [profile]` | Build (if needed) and enter a profile |
 | `just ssh [profile]` | SSH into a profile (when SSH is enabled) |
 | `just run <profile> <cmd>` | Run a one-off command in a profile |
@@ -59,6 +63,25 @@ The wizard asks for a name, a base distro, and which optional tools to include.
   - *CLI utilities:* GitHub CLI · jira · Neovim · lazygit · git-delta · yq · direnv · HTTPie · btop
 
 The default is a **minimal base** — leave every tool group unchecked and you get a clean Linux box with just the essentials above. Add tool groups only when you need them.
+
+## Recipes — declarative setups
+
+A **recipe** is a saved, declarative profile setup — distro, tool groups, pinned versions, extra packages — stored in this repo under `recipes/<name>.env` so your setups are versioned in git and reproducible on demand:
+
+```bash
+just recipes                  # list saved recipes (with settings and validation)
+just up node-web api          # create profile "api" from the node-web recipe and enter it
+just save api my-stack        # save an existing profile's setup as a recipe
+just up my-stack              # ...and spin it up again anywhere, any time
+```
+
+Saved recipes also appear as **starting points in the `just new` wizard**, so you can begin from a recipe and tweak it interactively. A recipe uses the same `KEY='value'` format as `profile.env`, minus the instance-specific keys (profile/container/image name, Linux user, SSH alias and key) — those derive from the profile name you pick. A leading `# description: ...` line is shown by `just recipes`, which also flags unrecognized keys so typos don't silently make it into builds.
+
+Beyond the tool toggles, a recipe (or any `profile.env`) can make the setup highly specific:
+
+- **Version pins** — override the image's build args, e.g. `NODE_MAJOR='22'`, `GO_VERSION='1.24.4'`, `KUBECTL_VERSION='v1.36.2'`, `K9S_VERSION`, `PNPM_VERSION`, `YARN_VERSION`, `PULUMI_VERSION`, `LAZYGIT_VERSION`, `DELTA_VERSION`, `YQ_VERSION`.
+- **Extra packages** — `EXTRA_APT_PACKAGES='postgresql-16 imagemagick'` installs additional distro packages at build time.
+- **Build hook** — every profile has a `~/container/<name>/setup.sh` that runs as root at the end of the image build, like the `RUN` lines of a Dockerfile, for anything the flags can't express. `just save` stores it with the recipe as `recipes/<name>.setup.sh`, and `just new-from` copies it into profiles created from that recipe.
 
 ## Staying current
 

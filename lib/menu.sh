@@ -20,6 +20,7 @@ printf '\n'
 
 printf '\n%bGet started%b\n' "$green" "$reset"
 row "$cmd new" 'Create a profile (interactive wizard)'
+row "$cmd up <recipe> [name]" 'Create from a recipe (if needed) and enter'
 row "$cmd open [profile]" 'Build (if needed) and enter a profile'
 row "$cmd ssh [profile]" 'SSH into a profile (if SSH enabled)'
 row "$cmd run <profile> <cmd>" 'Run a one-off command in a profile'
@@ -27,6 +28,8 @@ row "$cmd forward <port> [profile]" 'Forward a container port to localhost (via 
 
 printf '\n%bManage%b\n' "$green" "$reset"
 row "$cmd list" 'List your profiles'
+row "$cmd recipes" 'List saved recipes'
+row "$cmd save [profile] [recipe]" "Save a profile's setup as a recipe"
 row "$cmd status [profile]" 'Show profile state, resources, SSH, and backups'
 row "$cmd configure [profile]" 'Change profile settings with the wizard'
 row "$cmd start/stop [profile]" 'Control a container without changing its files'

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { access, chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, chmod, copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,6 +88,76 @@ function sanitizeName(value) {
 
 function sanitizeUser(value) {
   return value.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^[^a-z_]+/, '').replace(/-+$/, '') || 'dev';
+}
+
+const recipesDir = path.join(__dirname, 'recipes');
+
+function recipePath(name) {
+  if (name.includes('/') || name.endsWith('.env')) return path.resolve(name);
+  return path.join(recipesDir, `${name}.env`);
+}
+
+const instanceKeys = new Set([
+  'PROFILE_NAME',
+  'CONTAINER_NAME',
+  'IMAGE_NAME',
+  'APP_USER',
+  'APP_UID',
+  'PROFILE_PROMPT',
+  'SSH_HOSTNAME',
+  'SSH_PUBKEY'
+]);
+
+function structuredKeys() {
+  return new Set([
+    ...instanceKeys,
+    'BASE_IMAGE',
+    'CPUS',
+    'MEMORY',
+    'DOTFILES_DIR',
+    'INCLUDE_SSH',
+    ...integrationOptions.map((option) => option.value),
+    ...toolOptions.map((tool) => tool.value)
+  ]);
+}
+
+const extraKeyPattern = /^(NODE_MAJOR|EXTRA_APT_PACKAGES|BACKUP_KEEP|BACKUP_ON_REBUILD)$|_VERSION$/;
+
+async function listRecipeFiles() {
+  try {
+    return (await readdir(recipesDir)).filter((file) => file.endsWith('.env')).sort()
+      .map((file) => path.join(recipesDir, file));
+  } catch {
+    return [];
+  }
+}
+
+async function loadRecipe(rp) {
+  if (!(await exists(rp))) throw new Error(`No such recipe: ${rp}`);
+  const entries = parseEnvFile(await readFile(rp, 'utf8'));
+  const values = Object.fromEntries(entries);
+  const known = structuredKeys();
+  const setupCandidate = rp.replace(/\.env$/, '.setup.sh');
+  return {
+    values,
+    defaults: {
+      baseImage: values.BASE_IMAGE,
+      cpus: values.CPUS,
+      memory: values.MEMORY,
+      dotfilesDir: values.DOTFILES_DIR ?? '',
+      sshEnabled: values.INCLUDE_SSH === 'true',
+      selectedIntegrations: integrationOptions.filter((option) => values[option.value] === 'true').map((option) => option.value),
+      selectedTools: toolOptions.filter((tool) => values[tool.value] === 'true').map((tool) => tool.value)
+    },
+    extras: entries.filter(([key]) => !known.has(key)),
+    setup: (await exists(setupCandidate)) ? setupCandidate : ''
+  };
+}
+
+function applyRecipeDefaults(defaults, recipe) {
+  for (const [key, value] of Object.entries(recipe.defaults)) {
+    if (value !== undefined) defaults[key] = value;
+  }
 }
 
 function shellQuote(value) {
@@ -182,6 +252,11 @@ async function copyTemplateProfile(profileDir) {
     await copyFile(path.join(templateDir, file), path.join(profileDir, file));
   }
 
+  const setupTarget = path.join(profileDir, 'setup.sh');
+  if (!(await exists(setupTarget))) {
+    await copyFile(path.join(templateDir, 'setup.sh'), setupTarget);
+  }
+
   const templateFiles = ['.bashrc', '.zshenv', '.zshrc'];
   for (const file of templateFiles) {
     await copyFile(path.join(templateDir, 'templates', file), path.join(profileDir, 'templates', file));
@@ -227,6 +302,12 @@ function summarize(config) {
   console.log(`  ${label('Tools')}${describeTools(config.selectedTools)}`);
   console.log(`  ${label('Dotfiles')}${describeDotfiles(config)}`);
   console.log(`  ${label('SSH')}${config.sshEnabled ? `ssh ${config.sshHostname || config.profileName}  ${chalk.dim(`(key: ${config.sshPubkey})`)}` : chalk.dim('disabled')}`);
+  if (config.recipeExtras?.length) {
+    console.log(`  ${label('Extras')}${config.recipeExtras.map(([key, value]) => `${key}=${value}`).join(', ')}`);
+  }
+  if (config.recipeSetup) {
+    console.log(`  ${label('Setup')}${config.recipeSetup}`);
+  }
   console.log();
 }
 
@@ -242,11 +323,32 @@ async function promptForProfile(defaults) {
   });
   const profileName = sanitizeName(profileNameRaw);
 
+  const recipeFiles = await listRecipeFiles();
+  const startChoices = presets.map(({ name, value }) => ({ name, value }));
+  if (recipeFiles.length) {
+    startChoices.push(new Separator(chalk.dim('— Saved recipes —')));
+    for (const file of recipeFiles) {
+      startChoices.push({ name: path.basename(file, '.env'), value: `recipe:${file}` });
+    }
+  }
   const preset = await select({
     message: 'Starting point',
-    choices: presets.map(({ name, value }) => ({ name, value })),
+    choices: startChoices,
     default: defaults.preset
   });
+
+  let fromRecipe = false;
+  let recipeExtras = [];
+  let recipeSetup = '';
+  let presetTools = presets.find((option) => option.value === preset)?.tools ?? [];
+  if (preset.startsWith('recipe:')) {
+    const recipe = await loadRecipe(preset.slice('recipe:'.length));
+    applyRecipeDefaults(defaults, recipe);
+    fromRecipe = true;
+    presetTools = recipe.defaults.selectedTools;
+    recipeExtras = recipe.extras;
+    recipeSetup = recipe.setup;
+  }
 
   const baseImage = await select({
     message: 'Base distro',
@@ -262,7 +364,6 @@ async function promptForProfile(defaults) {
       toolChoices.push({ name: tool.name, value: tool.value, checked: false });
     }
   }
-  const presetTools = presets.find((option) => option.value === preset)?.tools ?? [];
   const selectedTools = await checkbox({
     message: 'Optional tools (space to toggle)',
     choices: toolChoices.map((choice) => choice instanceof Separator ? choice : { ...choice, checked: defaults.selectedTools?.includes(choice.value) || presetTools.includes(choice.value) }),
@@ -366,11 +467,14 @@ async function promptForProfile(defaults) {
     sshEnabled,
     sshHostname,
     sshPubkey,
-    selectedTools
+    selectedTools,
+    fromRecipe,
+    recipeExtras,
+    recipeSetup
   };
 }
 
-async function writeProfileEnv(profileDir, config) {
+async function writeProfileEnv(profileDir, config, extraEntries = []) {
   const enabledTools = new Set(config.selectedTools);
   const enabledIntegrations = new Set(config.selectedIntegrations);
   const lines = [
@@ -399,9 +503,16 @@ async function writeProfileEnv(profileDir, config) {
     lines.push(envLine(tool.value, enabledTools.has(tool.value) ? 'true' : 'false'));
   }
 
+  const knownKeys = new Set(lines.map((line) => line.slice(0, line.indexOf('='))));
+  for (const [key, value] of extraEntries) {
+    if (!knownKeys.has(key)) {
+      lines.push(envLine(key, value));
+      knownKeys.add(key);
+    }
+  }
+
   const envPath = path.join(profileDir, 'profile.env');
   if (await exists(envPath)) {
-    const knownKeys = new Set(lines.map((line) => line.slice(0, line.indexOf('='))));
     for (const [key, value] of parseEnvFile(await readFile(envPath, 'utf8'))) {
       if (!knownKeys.has(key)) lines.push(envLine(key, value));
     }
@@ -419,9 +530,70 @@ async function main() {
     .option('--dir <name>', 'profile directory name')
     .option('--yes', 'accept defaults where possible')
     .option('--configure', 'edit an existing profile')
+    .option('--recipe <name>', 'create the profile from a saved recipe')
+    .option('--export <name>', 'save a profile\'s setup as a recipe')
+    .option('--list-recipes', 'list saved recipes')
     .parse(process.argv);
 
   const options = program.opts();
+
+  if (options.listRecipes) {
+    const files = await listRecipeFiles();
+    if (!files.length) {
+      console.log(chalk.dim('No recipes yet. Save one from an existing profile with: just save <profile> [name]'));
+      return;
+    }
+    for (const file of files) {
+      const name = path.basename(file, '.env');
+      const content = await readFile(file, 'utf8');
+      const recipe = await loadRecipe(file);
+      const description = content.match(/^# description: (.*)$/m)?.[1] ?? '';
+      const tools = recipe.defaults.selectedTools.map((value) => value.replace('INCLUDE_', '').toLowerCase());
+      const bits = [recipe.defaults.baseImage ?? 'ubuntu:24.04'];
+      bits.push(tools.length ? tools.join(', ') : 'minimal');
+      if (recipe.defaults.sshEnabled) bits.push('ssh');
+      for (const [key, value] of recipe.extras.filter(([k]) => extraKeyPattern.test(k))) {
+        bits.push(`${key}=${value}`);
+      }
+      if (recipe.setup) bits.push('setup.sh');
+      console.log(`${chalk.cyanBright.bold(name)}  ${chalk.dim(description)}`);
+      console.log(`  ${chalk.dim(bits.join(' · '))}`);
+      const unknown = recipe.extras.filter(([k]) => !extraKeyPattern.test(k)).map(([k]) => k);
+      if (unknown.length) {
+        console.log(`  ${chalk.yellow(`unrecognized key(s): ${unknown.join(', ')} — typo? (they are still written to profile.env)`)}`);
+      }
+    }
+    console.log(chalk.dim('\nSpin one up: just up <recipe> [name] — or pick it as the starting point in `just new`.'));
+    return;
+  }
+
+  if (options.export) {
+    const profileName = sanitizeName(options.dir ?? DEFAULT_PROFILE_NAME);
+    const envFile = path.join(profilesRoot, profileName, 'profile.env');
+    if (!(await exists(envFile))) throw new Error(`No such profile: ${profileName}`);
+    const recipeName = sanitizeName(options.export);
+    const outPath = path.join(recipesDir, `${recipeName}.env`);
+    const replaced = await exists(outPath);
+    const lines = [`# description: exported from profile "${profileName}" on ${new Date().toISOString().slice(0, 10)}`];
+    for (const [key, value] of parseEnvFile(await readFile(envFile, 'utf8'))) {
+      if (!instanceKeys.has(key)) lines.push(envLine(key, value));
+    }
+    await mkdir(recipesDir, { recursive: true });
+    await writeFile(outPath, `${lines.join('\n')}\n`);
+    const setupSource = path.join(profilesRoot, profileName, 'setup.sh');
+    if (await exists(setupSource)) {
+      await copyFile(setupSource, path.join(recipesDir, `${recipeName}.setup.sh`));
+    }
+    console.log(chalk.greenBright(`✓ Saved recipe "${recipeName}" to ${outPath}${replaced ? chalk.yellow(' (replaced the previous version)') : ''}`));
+    console.log(chalk.bold('\nSpin up a profile from it:'));
+    console.log(chalk.cyan(`  just up ${recipeName} <name>`));
+    return;
+  }
+
+  if (options.configure && options.recipe) {
+    throw new Error('Use either --configure or --recipe, not both.');
+  }
+
   const defaults = {
     profileName: options.dir ?? DEFAULT_PROFILE_NAME,
     baseImage: 'ubuntu:24.04',
@@ -453,7 +625,20 @@ async function main() {
     });
   }
 
+  let recipeExtras = [];
+  let recipeSetup = '';
+  if (options.recipe) {
+    const rp = recipePath(options.recipe);
+    if (!(await exists(rp))) throw new Error(`No such recipe: ${options.recipe} (looked for ${rp})`);
+    const recipe = await loadRecipe(rp);
+    if (!options.dir) defaults.profileName = sanitizeName(path.basename(rp, '.env'));
+    applyRecipeDefaults(defaults, recipe);
+    recipeExtras = recipe.extras;
+    recipeSetup = recipe.setup;
+  }
+
   let config;
+  const fromSaved = Boolean(options.configure || options.recipe);
 
   if (options.yes) {
     const profileName = sanitizeName(defaults.profileName);
@@ -469,15 +654,19 @@ async function main() {
       cpus: defaults.cpus,
       memory: defaults.memory,
       // Minimal and hermetic by default — opt into tools and host dotfiles via the wizard.
-      dotfilesDir: options.configure ? (defaults.dotfilesDir ?? '') : '',
-      selectedIntegrations: options.configure ? (defaults.selectedIntegrations ?? []) : [],
-      sshEnabled: options.configure ? (defaults.sshEnabled ?? false) : false,
+      dotfilesDir: fromSaved ? (defaults.dotfilesDir ?? '') : '',
+      selectedIntegrations: fromSaved ? (defaults.selectedIntegrations ?? []) : [],
+      sshEnabled: fromSaved ? (defaults.sshEnabled ?? false) : false,
       sshHostname: options.configure ? (defaults.sshHostname ?? '') : '',
-      sshPubkey: options.configure ? (defaults.sshPubkey ?? '') : '',
-      selectedTools: options.configure ? (defaults.selectedTools ?? []) : []
+      sshPubkey: fromSaved ? (defaults.sshPubkey ?? '') : '',
+      selectedTools: fromSaved ? (defaults.selectedTools ?? []) : []
     };
   } else {
     config = await promptForProfile(defaults);
+    if (config.fromRecipe) {
+      recipeExtras = config.recipeExtras;
+      recipeSetup = config.recipeSetup;
+    }
     summarize(config);
     if (options.configure && existingValues && config.profileName !== existingValues.PROFILE_NAME) {
       console.log(chalk.yellow(`Note: renaming creates a new profile "${config.profileName}" — the existing "${existingValues.PROFILE_NAME}" profile, container, and image are left untouched. Remove them with: just destroy ${existingValues.PROFILE_NAME}`));
@@ -505,14 +694,14 @@ async function main() {
       console.error(chalk.red(`Profile directory already exists: ${profileDir}`));
       process.exit(1);
     }
-
-    // Re-copy the template files too, so template fixes reach existing profiles.
-    await copyTemplateProfile(profileDir);
-    await writeProfileEnv(profileDir, config);
-  } else {
-    await copyTemplateProfile(profileDir);
-    await writeProfileEnv(profileDir, config);
   }
+
+  // Re-copy the template files too, so template fixes reach existing profiles.
+  await copyTemplateProfile(profileDir);
+  if (recipeSetup) {
+    await copyFile(recipeSetup, path.join(profileDir, 'setup.sh'));
+  }
+  await writeProfileEnv(profileDir, config, recipeExtras);
 
   console.log(chalk.greenBright(`\n✓ Created profile "${config.profileName}" at ${profileDir}`));
   console.log(chalk.dim(`  Tools: ${describeTools(config.selectedTools)}`));

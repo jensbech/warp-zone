@@ -17,6 +17,34 @@ new:
 new-default name:
 	./create-profile.sh --dir {{name}} --yes
 
+new-from recipe name='':
+	#!/usr/bin/env bash
+	set -euo pipefail
+	cd "{{justfile_directory()}}"
+	name="{{name}}"
+	./create-profile.sh --recipe '{{recipe}}' --dir "${name:-{{recipe}}}" --yes
+
+save profile=default_profile name='':
+	#!/usr/bin/env bash
+	set -euo pipefail
+	cd "{{justfile_directory()}}"
+	name="{{name}}"
+	./create-profile.sh --export "${name:-{{profile}}}" --dir '{{profile}}'
+
+recipes:
+	@./create-profile.sh --list-recipes
+
+up recipe name='':
+	#!/usr/bin/env bash
+	set -euo pipefail
+	cd "{{justfile_directory()}}"
+	name="{{name}}"
+	name="${name:-{{recipe}}}"
+	if [ ! -d "$HOME/container/$name" ]; then
+	  ./create-profile.sh --recipe '{{recipe}}' --dir "$name" --yes
+	fi
+	just --justfile "{{justfile()}}" open "$name"
+
 configure profile=default_profile:
 	./create-profile.sh --dir {{profile}} --configure
 
@@ -35,6 +63,9 @@ _sync profile:
 	mkdir -p "$dir/templates" "$dir/lib"
 	cp "$src/template/templates/.bashrc" "$src/template/templates/.zshenv" "$src/template/templates/.zshrc" "$dir/templates/"
 	cp "$src/lib/helpers.sh" "$src/lib/backup.sh" "$src/lib/restore.sh" "$dir/lib/"
+	if [ ! -f "$dir/setup.sh" ]; then
+	  cp "$src/template/setup.sh" "$dir/setup.sh"
+	fi
 	chmod +x "$dir/build.sh" "$dir/open.sh" "$dir/rebuild.sh" "$dir/ssh.sh" "$dir/bootstrap-home" "$dir/lib/"*.sh
 
 build profile=default_profile: (_sync profile)
