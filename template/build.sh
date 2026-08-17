@@ -3,16 +3,19 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+passthrough_pattern='^INCLUDE_|^NODE_MAJOR$|^EXTRA_APT_PACKAGES$|_VERSION$'
+
 while IFS= read -r var; do
   unset "$var"
-done < <(compgen -v | grep '^INCLUDE_' || true)
+done < <(compgen -v | grep -E "$passthrough_pattern" || true)
 
 set -a
 . "$script_dir/profile.env"
 set +a
 
-# Pass the core identity args plus every INCLUDE_* flag from profile.env, so new
-# tool toggles only need to be added to the Containerfile — not wired up here too.
+# Pass the core identity args plus every INCLUDE_* flag, version override, and
+# EXTRA_APT_PACKAGES from profile.env, so new tool toggles only need to be added
+# to the Containerfile — not wired up here too.
 build_args=(
   --build-arg "BASE_IMAGE=${BASE_IMAGE:-ubuntu:24.04}"
   --build-arg "APP_USER=$APP_USER"
@@ -22,7 +25,7 @@ build_args=(
 
 while IFS= read -r var; do
   build_args+=(--build-arg "$var=${!var}")
-done < <(compgen -v | grep '^INCLUDE_' | sort)
+done < <(compgen -v | grep -E "$passthrough_pattern" | sort)
 
 # Always refresh the base image so a freshly built image starts from the latest
 # published distro layer; the Containerfile then applies OS updates on top.

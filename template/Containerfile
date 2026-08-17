@@ -60,6 +60,7 @@ ARG INCLUDE_DIRENV=false
 ARG INCLUDE_HTTPIE=false
 ARG INCLUDE_BTOP=false
 ARG INCLUDE_SSH=false
+ARG EXTRA_APT_PACKAGES=""
 
 ENV DEBIAN_FRONTEND=noninteractive \
     APP_USER=${APP_USER} \
@@ -258,6 +259,12 @@ RUN if [ "$INCLUDE_YQ" = "true" ]; then \
       chmod +x /usr/local/bin/yq; \
     fi
 
+RUN if [ -n "$EXTRA_APT_PACKAGES" ]; then \
+      apt-get update; \
+      apt-get install -y --no-install-recommends $EXTRA_APT_PACKAGES; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+
 # Key-only SSH: generate host keys and a drop-in that disables password login.
 # The host's public key is injected and sshd is started at runtime (see bootstrap).
 RUN if [ "$INCLUDE_SSH" = "true" ]; then \
@@ -273,6 +280,9 @@ RUN if [ "$INCLUDE_SSH" = "true" ]; then \
 
 RUN git clone --depth 1 https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh \
  && rm -rf /opt/oh-my-zsh/.git
+
+COPY setup.sh /usr/local/share/warp-zone/setup.sh
+RUN bash /usr/local/share/warp-zone/setup.sh
 
 COPY --from=jira-builder /go/bin/jira /usr/local/bin/jira
 COPY templates /opt/warp-zone/templates
