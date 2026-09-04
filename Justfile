@@ -134,7 +134,10 @@ manage:
 doctor:
 	"{{justfile_directory()}}/lib/doctor.sh"
 
-forward port profile=default_profile local_port='':
+# Reach a port that something inside the profile is listening on. Accepts one
+# port, a comma-separated list, or a range (4663-4673). A single port may be
+# remapped locally: `just forward 3000 dev 8080`.
+forward ports profile=default_profile local_port='':
 	#!/usr/bin/env bash
 	set -euo pipefail
 	env_file="$HOME/warp/{{profile}}/profile.env"
@@ -148,11 +151,41 @@ forward port profile=default_profile local_port='':
 	  printf 'Enable it with: just configure %s\n' "{{profile}}" >&2
 	  exit 1
 	fi
+	ports=()
+	IFS=',' read -ra requested <<< "{{ports}}"
+	for item in "${requested[@]}"; do
+	  item="${item// /}"
+	  [ -n "$item" ] || continue
+	  case "$item" in
+	    *-*)
+	      first="${item%%-*}"; last="${item##*-}"
+	      if [ "$first" -gt "$last" ] 2>/dev/null; then
+	        printf '\033[31mNot a valid port range: %s\033[0m\n' "$item" >&2
+	        exit 1
+	      fi
+	      for ((p = first; p <= last; p++)); do ports+=("$p"); done
+	      ;;
+	    *) ports+=("$item") ;;
+	  esac
+	done
+	if [ "${#ports[@]}" -eq 0 ]; then
+	  printf '\033[31mNo ports given.\033[0m\n' >&2
+	  exit 1
+	fi
 	lport="{{local_port}}"
-	lport="${lport:-{{port}}}"
+	if [ -n "$lport" ] && [ "${#ports[@]}" -ne 1 ]; then
+	  printf '\033[31mA local port can only be given when forwarding a single port.\033[0m\n' >&2
+	  exit 1
+	fi
 	host_alias="${SSH_HOSTNAME:-$PROFILE_NAME}"
-	printf '\033[1;36mForwarding localhost:%s -> %s:%s\033[0m \033[2m(Ctrl-C to stop)\033[0m\n' "$lport" "{{profile}}" "{{port}}"
-	exec ssh -N -L "$lport:127.0.0.1:{{port}}" "$host_alias"
+	forward_args=()
+	for port in "${ports[@]}"; do
+	  local_side="${lport:-$port}"
+	  forward_args+=(-L "$local_side:127.0.0.1:$port")
+	  printf '\033[1;36mForwarding localhost:%s -> %s:%s\033[0m\n' "$local_side" "{{profile}}" "$port"
+	done
+	printf '\033[2m(Ctrl-C to stop)\033[0m\n'
+	exec ssh -N -o ExitOnForwardFailure=yes "${forward_args[@]}" "$host_alias"
 
 run profile +cmd:
 	#!/usr/bin/env bash
