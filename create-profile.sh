@@ -8,6 +8,6 @@ if [ ! -d "$script_dir/node_modules" ]; then
   npm ci --prefix "$script_dir" >&2
 fi
 
-mkdir -p "$HOME/container"
+mkdir -p "$HOME/warp"
 
 node "$script_dir/create-profile.mjs" "$@"

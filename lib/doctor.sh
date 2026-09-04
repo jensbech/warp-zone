@@ -18,12 +18,15 @@ fail() { printf "  ${red}fail${reset}  %s\n" "$1"; problems=$((problems + 1)); }
 
 printf '%b\n' "${dim}Checking your warp-zone setup...${reset}"
 
+have_docker=false
+docker_up=false
+
 printf '\nHost tools\n'
-if command -v container >/dev/null 2>&1; then
-  container_version="$(container --version 2>/dev/null | head -n1)"
-  ok "container CLI installed (${container_version:-version unknown})"
+if command -v docker >/dev/null 2>&1; then
+  have_docker=true
+  ok "docker CLI installed ($(docker --version 2>/dev/null))"
 else
-  fail "Apple's container CLI is not installed or not on PATH — https://github.com/apple/container"
+  fail 'docker is not installed or not on PATH — https://docs.docker.com/desktop/setup/install/mac-install/'
 fi
 if command -v just >/dev/null 2>&1; then
   ok "just installed ($(just --version 2>/dev/null))"
@@ -36,13 +39,28 @@ else
   warn 'node is not installed — `just new` needs it'
 fi
 
-printf '\nContainer system\n'
-if command -v container >/dev/null 2>&1; then
-  if container list >/dev/null 2>&1; then
-    ok 'container system is running'
+printf '\nDocker engine\n'
+if [ "$have_docker" = "true" ]; then
+  if docker info >/dev/null 2>&1; then
+    docker_up=true
+    engine_version="$(docker info --format '{{.ServerVersion}}' 2>/dev/null)"
+    engine_cpu="$(docker info --format '{{.NCPU}}' 2>/dev/null)"
+    engine_mem="$(( $(docker info --format '{{.MemTotal}}' 2>/dev/null) / 1024 / 1024 / 1024 ))"
+    ok "daemon reachable (${engine_version} · ${engine_cpu} CPU · ${engine_mem}G RAM available to profiles)"
   else
-    warn 'container system is not running — `just open` starts it, or run: container system start'
+    fail 'cannot reach the Docker daemon — start Docker Desktop (or your Docker runtime)'
   fi
+fi
+
+printf '\nNetwork\n'
+route_mtu="$(route -n get default 2>/dev/null | awk '/mtu/ {getline; print $7}')"
+if [ -n "$route_mtu" ] && [ "$route_mtu" -lt 1500 ] 2>/dev/null; then
+  warn "the default route has MTU ${route_mtu} (a VPN, most likely)"
+  printf "  ${dim}Docker Desktop assumes 1500, so large image pulls can die with \"unexpected EOF\".${reset}\n"
+  printf "  ${dim}Fix the host: Docker Desktop -> Settings -> Resources -> Network -> MTU = ${route_mtu}.${reset}\n"
+  printf "  ${dim}Fix a profile's own engine: DOCKERD_ARGS=\"--mtu ${route_mtu}\" in its profile.env, then: just rebuild <profile>${reset}\n"
+else
+  ok "default route MTU ${route_mtu:-1500}"
 fi
 
 printf '\nDisk\n'
@@ -50,9 +68,18 @@ available_kb="$(df -k "$HOME" 2>/dev/null | tail -n1 | awk '{print $4}')"
 if [ -n "$available_kb" ]; then
   available_gb=$((available_kb / 1024 / 1024))
   if [ "$available_gb" -lt 50 ]; then
-    warn "only ${available_gb} GB free on the profile disk; 50 GB or more is recommended"
+    warn "only ${available_gb} GB free on the host disk; 50 GB or more is recommended"
   else
-    ok "${available_gb} GB free on the profile disk"
+    ok "${available_gb} GB free on the host disk"
+  fi
+fi
+if [ "$docker_up" = "true" ]; then
+  reclaimable="$(docker system df --format '{{.Type}}: {{.Size}} ({{.Reclaimable}} reclaimable)' 2>/dev/null || true)"
+  if [ -n "$reclaimable" ]; then
+    while IFS= read -r line; do
+      printf "  ${dim}%s${reset}\n" "$line"
+    done <<<"$reclaimable"
+    printf "  ${dim}reclaim with: just prune${reset}\n"
   fi
 fi
 
@@ -61,23 +88,25 @@ profiles="$(profile_names)"
 if [ -z "$profiles" ]; then
   printf "  ${dim}none — create one with: just new${reset}\n"
 fi
-all_containers=""
-if command -v container >/dev/null 2>&1; then
-  all_containers="$(container list --all --quiet 2>/dev/null || true)"
-fi
 for profile in $profiles; do
   set +e
   (
     load_profile "$profile"
-    if ! command -v container >/dev/null 2>&1; then
-      exit 0
-    fi
-    if ! container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+    [ "$docker_up" = "true" ] || exit 0
+    if ! container_exists "$CONTAINER_NAME"; then
       printf "  ${dim}%-18s not created yet — run: just open %s${reset}\n" "$profile" "$profile"
       exit 0
     fi
-    if ! container image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+    if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
       printf "  ${yellow}warn${reset}  %-18s container exists but image %s is missing — run: just rebuild %s\n" "$profile" "$IMAGE_NAME" "$profile"
+      exit 2
+    fi
+    if ! volume_exists "$WORK_VOLUME"; then
+      printf "  ${yellow}warn${reset}  %-18s work volume %s is missing — run: just rebuild %s\n" "$profile" "$WORK_VOLUME" "$profile"
+      exit 2
+    fi
+    if container_running "$CONTAINER_NAME" && ! docker exec "$CONTAINER_NAME" docker info >/dev/null 2>&1; then
+      printf "  ${yellow}warn${reset}  %-18s inner Docker engine is not running — check: just run %s \"sudo cat /var/log/dockerd.log\"\n" "$profile" "$profile"
       exit 2
     fi
     if [ "${INCLUDE_SSH:-false}" = "true" ]; then
@@ -98,16 +127,40 @@ for profile in $profiles; do
   fi
 done
 
-if [ -n "$all_containers" ]; then
-  orphans=""
-  for name in $all_containers; do
-    if [ ! -f "$profiles_root/$name/profile.env" ]; then
-      orphans="$orphans $name"
-    fi
+# Duplicate SSH ports would make one profile unreachable, and the failure looks
+# like an SSH problem rather than a config one — so name it here.
+if [ -n "$profiles" ]; then
+  dupes="$(
+    for profile in $profiles; do
+      (load_profile "$profile"; printf '%s\n' "${SSH_PORT:-}") 2>/dev/null
+    done | sort | uniq -d
+  )"
+  if [ -n "$dupes" ]; then
+    printf '\nSSH ports\n'
+    for port in $dupes; do
+      warn "port $port is claimed by more than one profile — change SSH_PORT in one of them, then: just rebuild <profile>"
+    done
+  fi
+fi
+
+if [ "$docker_up" = "true" ]; then
+  orphan_containers=""
+  for name in $(warp_containers); do
+    label="$(container_profile_label "$name")"
+    [ -n "$label" ] && [ -f "$profiles_root/$label/profile.env" ] && continue
+    orphan_containers="$orphan_containers $name"
   done
-  if [ -n "$orphans" ]; then
-    printf '\nOther containers\n'
-    warn "containers with no matching profile:${orphans} — remove with: container delete <name>"
+  orphan_volumes=""
+  for name in $(warp_volumes); do
+    label="$(volume_profile_label "$name")"
+    [ -n "$label" ] && [ -f "$profiles_root/$label/profile.env" ] && continue
+    orphan_volumes="$orphan_volumes $name"
+  done
+  if [ -n "$orphan_containers$orphan_volumes" ]; then
+    printf '\nLeftovers\n'
+    [ -n "$orphan_containers" ] && warn "containers with no profile:${orphan_containers}"
+    [ -n "$orphan_volumes" ] && warn "volumes with no profile:${orphan_volumes}"
+    printf "  ${dim}remove them with: just prune${reset}\n"
   fi
 fi
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { access, chmod, copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import net from 'node:net';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +14,18 @@ import { input, checkbox, confirm, select, Separator } from '@inquirer/prompts';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const templateDir = path.join(__dirname, 'template');
-const profilesRoot = path.join(process.env.HOME ?? '', 'container');
+const profilesRoot = path.join(process.env.HOME ?? '', 'warp');
+
+// Docker's namespace is global to the daemon, so every warp-zone resource is
+// prefixed and labelled — a profile named "dev" must not collide with whatever
+// else happens to be called "dev" on this machine.
+const RESOURCE_PREFIX = 'warp-';
+const FIRST_SSH_PORT = 2200;
+
+const containerNameFor = (profile) => `${RESOURCE_PREFIX}${profile}`;
+const imageNameFor = (profile) => `${RESOURCE_PREFIX}${profile}:latest`;
+const workVolumeFor = (profile) => `${RESOURCE_PREFIX}${profile}-work`;
+const dockerVolumeFor = (profile) => `${RESOURCE_PREFIX}${profile}-docker`;
 
 // Neutral, minimal default — a fresh Linux box with just the essentials.
 const DEFAULT_PROFILE_NAME = 'dev';
@@ -37,7 +49,6 @@ const toolOptions = [
   { name: 'Bun', value: 'INCLUDE_BUN', group: 'Languages & runtimes' },
   { name: 'Deno', value: 'INCLUDE_DENO', group: 'Languages & runtimes' },
   // Cloud & infrastructure
-  { name: 'Docker CLI + Compose', value: 'INCLUDE_DOCKER', group: 'Cloud & infrastructure' },
   { name: 'kubectl', value: 'INCLUDE_KUBECTL', group: 'Cloud & infrastructure' },
   { name: 'Helm', value: 'INCLUDE_HELM', group: 'Cloud & infrastructure' },
   { name: 'k9s', value: 'INCLUDE_K9S', group: 'Cloud & infrastructure' },
@@ -65,10 +76,10 @@ const toolOptions = [
 
 const presets = [
   { name: 'Minimal', value: 'minimal', tools: [] },
-  { name: 'Node web app', value: 'node', tools: ['INCLUDE_NODE', 'INCLUDE_GH', 'INCLUDE_DOCKER', 'INCLUDE_POSTGRES_CLIENT'] },
+  { name: 'Node web app', value: 'node', tools: ['INCLUDE_NODE', 'INCLUDE_GH', 'INCLUDE_POSTGRES_CLIENT'] },
   { name: 'Python data', value: 'python', tools: ['INCLUDE_PYTHON', 'INCLUDE_SQLITE', 'INCLUDE_HTTPIE'] },
   { name: 'Cloud and Kubernetes', value: 'cloud', tools: ['INCLUDE_KUBECTL', 'INCLUDE_HELM', 'INCLUDE_K9S', 'INCLUDE_TERRAFORM', 'INCLUDE_PULUMI', 'INCLUDE_AZURE_CLI'] },
-  { name: '.NET', value: 'dotnet', tools: ['INCLUDE_DOTNET', 'INCLUDE_DOCKER'] },
+  { name: '.NET', value: 'dotnet', tools: ['INCLUDE_DOTNET'] },
   { name: 'Custom', value: 'custom', tools: [] }
 ];
 
@@ -101,9 +112,12 @@ const instanceKeys = new Set([
   'PROFILE_NAME',
   'CONTAINER_NAME',
   'IMAGE_NAME',
+  'WORK_VOLUME',
+  'DOCKER_VOLUME',
   'APP_USER',
   'APP_UID',
   'PROFILE_PROMPT',
+  'SSH_PORT',
   'SSH_HOSTNAME',
   'SSH_PUBKEY'
 ]);
@@ -115,13 +129,14 @@ function structuredKeys() {
     'CPUS',
     'MEMORY',
     'DOTFILES_DIR',
+    'DOCKERD_ARGS',
     'INCLUDE_SSH',
     ...integrationOptions.map((option) => option.value),
     ...toolOptions.map((tool) => tool.value)
   ]);
 }
 
-const extraKeyPattern = /^(NODE_MAJOR|EXTRA_APT_PACKAGES|BACKUP_KEEP|BACKUP_ON_REBUILD)$|_VERSION$/;
+const extraKeyPattern = /^(NODE_MAJOR|EXTRA_APT_PACKAGES|BACKUP_KEEP)$|_VERSION$/;
 
 async function listRecipeFiles() {
   try {
@@ -204,6 +219,47 @@ async function exists(targetPath) {
   }
 }
 
+// Every profile publishes its own sshd on 127.0.0.1:<port>, whether or not SSH
+// is switched on, so turning SSH on later never needs the container recreated.
+// A port has to clear both checks: not claimed by another profile, and free on
+// this host right now.
+function portIsFree(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.once('listening', () => server.close(() => resolve(true)));
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+async function claimedSshPorts(exceptProfile) {
+  const claimed = new Set();
+  let entries = [];
+  try {
+    entries = await readdir(profilesRoot, { withFileTypes: true });
+  } catch {
+    return claimed;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === exceptProfile) continue;
+    try {
+      const values = Object.fromEntries(parseEnvFile(await readFile(path.join(profilesRoot, entry.name, 'profile.env'), 'utf8')));
+      if (values.SSH_PORT) claimed.add(Number(values.SSH_PORT));
+    } catch {}
+  }
+  return claimed;
+}
+
+async function allocateSshPort(profileName, existing) {
+  const claimed = await claimedSshPorts(profileName);
+  if (existing && !claimed.has(Number(existing))) return String(existing);
+  for (let port = FIRST_SSH_PORT; port < FIRST_SSH_PORT + 500; port += 1) {
+    if (claimed.has(port)) continue;
+    if (await portIsFree(port)) return String(port);
+  }
+  throw new Error(`No free port found between ${FIRST_SSH_PORT} and ${FIRST_SSH_PORT + 500}.`);
+}
+
 function commandExists(command) {
   try {
     execFileSync('which', [command], { stdio: 'ignore' });
@@ -220,7 +276,15 @@ function validResources(cpus, memory) {
 async function validateConfig(config) {
   const errors = [];
   const warnings = [];
-  if (!commandExists('container')) errors.push('Apple\'s container CLI is not installed or not on PATH.');
+  if (!commandExists('docker')) {
+    errors.push('docker is not installed or not on PATH — https://docs.docker.com/desktop/setup/install/mac-install/');
+  } else {
+    try {
+      execFileSync('docker', ['info'], { stdio: 'ignore' });
+    } catch {
+      errors.push('Cannot reach the Docker daemon. Start Docker Desktop (or your Docker runtime) and try again.');
+    }
+  }
   if (!commandExists('just')) errors.push('just is not installed or not on PATH.');
   if (!validResources(config.cpus, config.memory)) errors.push('CPU must be a positive number or "max"; memory must be like "8G", "512M", or "max".');
   if (config.dotfilesDir && !(await exists(config.dotfilesDir))) errors.push(`Dotfiles directory does not exist: ${config.dotfilesDir}`);
@@ -239,8 +303,10 @@ async function copyTemplateProfile(profileDir) {
   await mkdir(path.join(profileDir, 'lib'), { recursive: true });
 
   const files = [
-    'Containerfile',
+    'Dockerfile',
+    '.dockerignore',
     'bootstrap-home',
+    'warp-init',
     'build.sh',
     'open.sh',
     'rebuild.sh',
@@ -250,6 +316,9 @@ async function copyTemplateProfile(profileDir) {
 
   for (const file of files) {
     await copyFile(path.join(templateDir, file), path.join(profileDir, file));
+  }
+  for (const file of ['bootstrap-home', 'warp-init', 'build.sh', 'open.sh', 'rebuild.sh', 'ssh.sh']) {
+    await chmod(path.join(profileDir, file), 0o755);
   }
 
   const setupTarget = path.join(profileDir, 'setup.sh');
@@ -301,7 +370,8 @@ function summarize(config) {
   console.log(`  ${label('CPU/RAM')}${config.cpus} / ${config.memory}`);
   console.log(`  ${label('Tools')}${describeTools(config.selectedTools)}`);
   console.log(`  ${label('Dotfiles')}${describeDotfiles(config)}`);
-  console.log(`  ${label('SSH')}${config.sshEnabled ? `ssh ${config.sshHostname || config.profileName}  ${chalk.dim(`(key: ${config.sshPubkey})`)}` : chalk.dim('disabled')}`);
+  console.log(`  ${label('SSH')}${config.sshEnabled ? `ssh ${config.sshHostname || config.profileName}  ${chalk.dim(`(127.0.0.1:${config.sshPort}, key: ${config.sshPubkey})`)}` : chalk.dim(`disabled (port ${config.sshPort} reserved)`)}`);
+  console.log(`  ${label('Docker')}${chalk.dim('engine inside the profile (docker-in-docker), state on volume ' + config.dockerVolume)}`);
   if (config.recipeExtras?.length) {
     console.log(`  ${label('Extras')}${config.recipeExtras.map(([key, value]) => `${key}=${value}`).join(', ')}`);
   }
@@ -424,8 +494,11 @@ async function promptForProfile(defaults) {
   // the profile name; they are not asked.
   let appUser = defaults.appUser ?? sanitizeUser(profileName);
   let appUid = defaults.appUid;
-  const containerName = profileName;
-  const imageName = `${profileName}:latest`;
+  const containerName = containerNameFor(profileName);
+  const imageName = imageNameFor(profileName);
+  const workVolume = workVolumeFor(profileName);
+  const dockerVolume = dockerVolumeFor(profileName);
+  const sshPort = await allocateSshPort(profileName, defaults.sshPort);
   let cpus = defaults.cpus;
   let memory = defaults.memory;
 
@@ -456,6 +529,9 @@ async function promptForProfile(defaults) {
     profileName,
     containerName,
     imageName,
+    workVolume,
+    dockerVolume,
+    sshPort,
     baseImage,
     appUser,
     appUid,
@@ -481,6 +557,8 @@ async function writeProfileEnv(profileDir, config, extraEntries = []) {
     envLine('PROFILE_NAME', config.profileName),
     envLine('CONTAINER_NAME', config.containerName),
     envLine('IMAGE_NAME', config.imageName),
+    envLine('WORK_VOLUME', config.workVolume),
+    envLine('DOCKER_VOLUME', config.dockerVolume),
     envLine('BASE_IMAGE', config.baseImage),
     envLine('APP_USER', config.appUser),
     envLine('APP_UID', config.appUid),
@@ -489,7 +567,11 @@ async function writeProfileEnv(profileDir, config, extraEntries = []) {
     envLine('MEMORY', config.memory),
     // Empty DOTFILES_DIR means hermetic: no host mount, no dotfiles pulled in.
     envLine('DOTFILES_DIR', config.dotfilesDir),
-    // SSH access: install/enable flag, host alias, and the host public key to authorize.
+    // Extra flags for the profile's own dockerd, e.g. "--mtu 1400".
+    envLine('DOCKERD_ARGS', config.dockerdArgs ?? ''),
+    // Always published on 127.0.0.1 so SSH can be switched on later without
+    // recreating the container; INCLUDE_SSH only decides whether sshd is installed.
+    envLine('SSH_PORT', config.sshPort),
     envLine('INCLUDE_SSH', config.sshEnabled ? 'true' : 'false'),
     envLine('SSH_HOSTNAME', config.sshHostname),
     envLine('SSH_PUBKEY', config.sshPubkey)
@@ -616,6 +698,7 @@ async function main() {
       appUid: existingValues.APP_UID,
       cpus: existingValues.CPUS,
       memory: existingValues.MEMORY,
+      sshPort: existingValues.SSH_PORT,
       dotfilesDir: existingValues.DOTFILES_DIR,
       sshPubkey: existingValues.SSH_PUBKEY,
       sshEnabled: existingValues.INCLUDE_SSH === 'true',
@@ -645,8 +728,11 @@ async function main() {
     const appUser = defaults.appUser ?? sanitizeUser(profileName);
     config = {
       profileName,
-      containerName: profileName,
-      imageName: `${profileName}:latest`,
+      containerName: containerNameFor(profileName),
+      imageName: imageNameFor(profileName),
+      workVolume: workVolumeFor(profileName),
+      dockerVolume: dockerVolumeFor(profileName),
+      sshPort: await allocateSshPort(profileName, defaults.sshPort),
       baseImage: defaults.baseImage,
       appUser,
       appUid: defaults.appUid,
@@ -721,7 +807,8 @@ async function main() {
     const needsRecreate = changed({
       CPUS: config.cpus,
       MEMORY: config.memory,
-      DOTFILES_DIR: config.dotfilesDir
+      DOTFILES_DIR: config.dotfilesDir,
+      SSH_PORT: config.sshPort
     });
     if (needsImageRebuild) {
       if (await confirm({ message: 'These changes require an image rebuild. Rebuild now?', default: false })) {

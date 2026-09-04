@@ -7,26 +7,20 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 profile="${1:-dev}"
 load_profile "$profile"
 
-if ! container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
-  printf 'Container not created yet. Run: just open %s\n' "$profile" >&2
-  exit 1
-fi
-started=false
-if ! container_running "$CONTAINER_NAME"; then
-  container start "$CONTAINER_NAME" >/dev/null
-  started=true
-fi
+require_docker
+require_container "$profile" "$CONTAINER_NAME"
+started="$(ensure_running "$CONTAINER_NAME")"
 
 stop_if_started() {
-  if [ "$started" = "true" ]; then
-    container stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  if [ "$started" = "started" ]; then
+    docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
 }
 
 backups_dir="$(profile_dir "$profile")/backups"
 mkdir -p "$backups_dir"
 backup="$backups_dir/work-$(date +%Y%m%d-%H%M%S).tar.gz"
-if ! container exec "$CONTAINER_NAME" tar -C "/home/$APP_USER" -czf - work > "$backup"; then
+if ! docker exec "$CONTAINER_NAME" tar -C "/home/$APP_USER" -czf - work > "$backup"; then
   rm -f "$backup"
   stop_if_started
   exit 1
