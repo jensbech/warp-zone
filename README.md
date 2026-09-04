@@ -27,7 +27,7 @@ Run `just` to see the menu.
 | `just open [profile]` | Build (if needed) and enter a profile |
 | `just ssh [profile]` | SSH into a profile (when SSH is enabled) |
 | `just run <profile> <cmd>` | Run a one-off command in a profile |
-| `just forward <port> [profile] [local]` | Forward a container port to localhost (needs SSH) |
+| `just forward <ports> [profile] [local]` | Reach ports inside a profile from your Mac (needs SSH) |
 | `just doctor` | Check host tools, disk, profiles, and containers for problems |
 | `just list` | List your profiles |
 | `just status [profile]` | Show profile state, resources, SSH, and backup usage |
@@ -98,6 +98,18 @@ The engine is **nested, not shared**. Containers you start inside a profile are 
 - Profiles run with `--privileged`. That is what makes a nested engine possible.
 - Each profile keeps its own image cache in the `warp-<name>-docker` volume, so the first `docker pull` inside a new profile is cold even if your Mac already has that image. That volume survives `just rebuild` and is deleted by `just destroy`.
 - Everything lives in Docker Desktop's VM, so its disk fills faster than you'd expect. `just doctor` reports what's reclaimable.
+
+### Reaching a service you started inside a profile
+
+Ports published *inside* a profile land on the **profile's** loopback, not your Mac's — there are two layers of NAT, and only the SSH port is published outward. Bridge them with `just forward`, which accepts a single port, a comma-separated list, or a range:
+
+```bash
+just forward 3000 dev                          # one port
+just forward 4663,4664,4669-4673 services-dev  # a whole compose stack
+just forward 3000 dev 8080                     # remap: localhost:8080 -> profile:3000
+```
+
+This tunnels to the profile's `127.0.0.1`, so it works with compose files that bind to loopback (`127.0.0.1:4673->3000/tcp`) without changing them. It needs SSH enabled on the profile; turn it on with `just configure <name>` and rebuild.
 
 If the profile's engine can't pull images but your Mac can, it's almost always MTU — common on VPNs. Set `DOCKERD_ARGS="--mtu 1420"` (matching your default route) in `~/warp/<name>/profile.env` and `just rebuild <name>`. `just doctor` flags this automatically.
 

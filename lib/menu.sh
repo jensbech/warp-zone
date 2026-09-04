@@ -24,7 +24,7 @@ row "$cmd up <recipe> [name]" 'Create from a recipe (if needed) and enter'
 row "$cmd open [profile]" 'Build (if needed) and enter a profile'
 row "$cmd ssh [profile]" 'SSH into a profile (if SSH enabled)'
 row "$cmd run <profile> <cmd>" 'Run a one-off command in a profile'
-row "$cmd forward <port> [profile]" 'Forward a container port to localhost (via SSH)'
+row "$cmd forward <ports> [profile]" 'Reach ports inside a profile from your Mac (via SSH)'
 
 printf '\n%bManage%b\n' "$green" "$reset"
 row "$cmd list" 'List your profiles'
