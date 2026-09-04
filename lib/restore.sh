@@ -25,26 +25,23 @@ select name in "${names[@]}" "Cancel"; do
   break
 done
 
-if ! container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+require_docker
+if ! container_exists "$CONTAINER_NAME"; then
   "$(profile_dir "$profile")/open.sh" --no-shell
 fi
-started=false
-if ! container_running "$CONTAINER_NAME"; then
-  container start "$CONTAINER_NAME" >/dev/null
-  started=true
-fi
+started="$(ensure_running "$CONTAINER_NAME")"
 printf 'Restore replaces /home/%s/work. Continue? [y/N] ' "$APP_USER"
 read -r answer
 if [ "$answer" != y ] && [ "$answer" != Y ]; then
-  if [ "$started" = "true" ]; then
-    container stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  if [ "$started" = "started" ]; then
+    docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
   exit 0
 fi
-container exec "$CONTAINER_NAME" rm -rf "/home/$APP_USER/work"
-container exec -i "$CONTAINER_NAME" tar -C "/home/$APP_USER" -xzf - < "$backup"
-container exec "$CONTAINER_NAME" chown -R "$APP_USER:$APP_USER" "/home/$APP_USER/work"
-if [ "$started" = "true" ]; then
-  container stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+docker exec "$CONTAINER_NAME" find "/home/$APP_USER/work" -mindepth 1 -delete
+docker exec -i "$CONTAINER_NAME" tar -C "/home/$APP_USER" -xzf - < "$backup"
+docker exec "$CONTAINER_NAME" chown -R "$APP_USER:$APP_USER" "/home/$APP_USER/work"
+if [ "$started" = "started" ]; then
+  docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
 fi
 printf 'Restored %s\n' "$backup"

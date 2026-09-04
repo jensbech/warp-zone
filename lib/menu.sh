@@ -13,7 +13,7 @@ reset='\033[0m'
 row() { printf "  ${green}%-30s${reset} ${dim}%s${reset}\n" "$1" "$2"; }
 row_danger() { printf "  ${red}%-30s${reset} ${dim}%s${reset}\n" "$1" "$2"; }
 
-printf '%b\n' "${cyan}🌀 warp-zone${reset}  ${dim}isolated Linux dev profiles · ~/container · default: dev${reset}"
+printf '%b\n' "${cyan}🌀 warp-zone${reset}  ${dim}isolated Linux dev profiles · docker-in-docker · ~/warp · default: dev${reset}"
 printf '\n'
 
 "$root/lib/status.sh"
@@ -36,13 +36,14 @@ row "$cmd start/stop [profile]" 'Control a container without changing its files'
 row "$cmd backup [profile]" 'Back up ~/work'
 row "$cmd restore [profile]" 'Restore ~/work from a backup'
 row "$cmd build [profile]" 'Build the image only'
-row "$cmd rebuild [profile]" 'Rebuild image and recreate container'
+row "$cmd rebuild [profile]" 'Rebuild image and recreate container (~/work is kept)'
 row "$cmd update [profile]" 'Update OS packages in a container'
 row "$cmd update-all" 'Update OS packages in every container (parallel)'
 row "$cmd logs [profile]" "Show a container's logs"
-row "$cmd prune" 'Remove stopped containers and unused images'
+row "$cmd prune" 'Reclaim dangling images and leftovers from deleted profiles'
 row "$cmd doctor" 'Check your setup for problems'
-row_danger "$cmd destroy [profile]" 'Delete a profile, its container, and image'
+row "$cmd smoke [name]" 'End-to-end self-test on a throwaway profile'
+row_danger "$cmd destroy [profile]" 'Delete a profile, its container, image, and ~/work'
 row "$cmd install-global" 'Install the warp command for use anywhere'
 
 printf '\n%bTip: profile defaults to "dev" when omitted.%b\n' "$dim" "$reset"

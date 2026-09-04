@@ -2,34 +2,21 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$script_dir/lib/helpers.sh"
 
 . "$script_dir/profile.env"
 
-container_name="$CONTAINER_NAME"
+require_docker
 
 if [ "${1:-}" != "--skip-build" ]; then
   "$script_dir/build.sh"
 fi
 
-if container inspect "$container_name" >/dev/null 2>&1; then
-  if [ "${BACKUP_ON_REBUILD:-prompt}" = "always" ]; then
-    "$script_dir/lib/backup.sh" "$PROFILE_NAME"
-  elif [ "${BACKUP_ON_REBUILD:-prompt}" != "never" ]; then
-    printf 'Rebuild replaces this container and deletes its writable state. Back up ~/work first? [y/N/a] '
-    read -r answer
-    case "$answer" in
-      y|Y) "$script_dir/lib/backup.sh" "$PROFILE_NAME" ;;
-      a|A)
-        "$script_dir/lib/backup.sh" "$PROFILE_NAME"
-        printf 'BACKUP_ON_REBUILD="always"\n' >> "$script_dir/profile.env"
-        ;;
-    esac
-  fi
-  if container list -q | grep -Fxq "$container_name"; then
-    container stop "$container_name"
-  fi
-
-  container delete "$container_name"
+# Rebuild only replaces the container. ~/work and the profile's Docker state live
+# on named volumes, so nothing you care about is in the container's writable
+# layer — no backup dance needed.
+if container_exists "$CONTAINER_NAME"; then
+  docker rm -f "$CONTAINER_NAME" >/dev/null
 fi
 
 "$script_dir/open.sh"

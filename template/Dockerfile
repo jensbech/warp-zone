@@ -1,7 +1,10 @@
-# Global ARG (declared before the first FROM) so it can be used in the FROM below.
+# Global ARGs (declared before the first FROM) so they can be used in the FROMs below.
 ARG BASE_IMAGE=ubuntu:24.04
+# Only the jira build needs Go. Profiles without jira point this at their own base
+# image instead, so nobody pays an 800 MB golang pull to touch an empty file.
+ARG JIRA_BUILDER_IMAGE=ubuntu:24.04
 
-FROM golang:1.24-bookworm AS jira-builder
+FROM ${JIRA_BUILDER_IMAGE} AS jira-builder
 
 ARG INCLUDE_JIRA=false
 
@@ -43,7 +46,6 @@ ARG INCLUDE_JAVA=false
 ARG INCLUDE_RUBY=false
 ARG INCLUDE_BUN=false
 ARG INCLUDE_DENO=false
-ARG INCLUDE_DOCKER=false
 ARG INCLUDE_HELM=false
 ARG INCLUDE_TERRAFORM=false
 ARG INCLUDE_AWS_CLI=false
@@ -81,7 +83,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update \
  && apt-get upgrade -y \
- && packages="bash bat build-essential ca-certificates curl file fzf git gnupg jq less lsb-release openssh-client procps ripgrep sudo tmux unzip vim wget xz-utils zip zsh zsh-autosuggestions zsh-syntax-highlighting" \
+ && packages="bash bat build-essential ca-certificates curl file fzf git gnupg iptables jq less lsb-release openssh-client procps ripgrep sudo tmux unzip vim wget xz-utils zip zsh zsh-autosuggestions zsh-syntax-highlighting" \
  && if [ "$INCLUDE_PYTHON" = "true" ]; then packages="$packages python3 python3-pip python3-venv"; fi \
  && if [ "$INCLUDE_JAVA" = "true" ]; then packages="$packages default-jdk-headless"; fi \
  && if [ "$INCLUDE_RUBY" = "true" ]; then packages="$packages ruby-full"; fi \
@@ -125,11 +127,9 @@ RUN . /etc/os-release \
  && if [ "$INCLUDE_DOTNET" = "true" ]; then \
       printf "Types: deb\nURIs: https://packages.microsoft.com/%s/prod\nSuites: %s\nComponents: main\nArchitectures: %s\nSigned-by: /etc/apt/keyrings/microsoft.gpg\n" "$ms_repo" "$codename" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/microsoft-prod.sources; \
     fi \
- && if [ "$INCLUDE_DOCKER" = "true" ]; then \
-      curl -fsSL "https://download.docker.com/linux/${ID}/gpg" -o /etc/apt/keyrings/docker.asc; \
-      chmod go+r /etc/apt/keyrings/docker.asc; \
-      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${ID} ${codename} stable" > /etc/apt/sources.list.d/docker.list; \
-    fi \
+ && curl -fsSL "https://download.docker.com/linux/${ID}/gpg" -o /etc/apt/keyrings/docker.asc \
+ && chmod go+r /etc/apt/keyrings/docker.asc \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${ID} ${codename} stable" > /etc/apt/sources.list.d/docker.list \
  && if [ "$INCLUDE_TERRAFORM" = "true" ]; then \
       curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /etc/apt/keyrings/hashicorp.gpg; \
       chmod go+r /etc/apt/keyrings/hashicorp.gpg; \
@@ -152,7 +152,7 @@ RUN apt-get update \
  && if [ "$INCLUDE_DOTNET" = "true" ]; then packages="$packages dotnet-sdk-8.0 dotnet-sdk-10.0"; fi \
  && if [ "$INCLUDE_GH" = "true" ]; then packages="$packages gh"; fi \
  && if [ "$INCLUDE_NODE" = "true" ]; then packages="$packages nodejs"; fi \
- && if [ "$INCLUDE_DOCKER" = "true" ]; then packages="$packages docker-ce-cli docker-buildx-plugin docker-compose-plugin"; fi \
+ && packages="$packages docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin" \
  && if [ "$INCLUDE_TERRAFORM" = "true" ]; then packages="$packages terraform"; fi \
  && if [ "$INCLUDE_GCLOUD" = "true" ]; then packages="$packages google-cloud-cli"; fi \
  && if [ "$INCLUDE_HELM" = "true" ]; then packages="$packages helm"; fi \
@@ -287,14 +287,15 @@ RUN bash /usr/local/share/warp-zone/setup.sh
 COPY --from=jira-builder /go/bin/jira /usr/local/bin/jira
 COPY templates /opt/warp-zone/templates
 COPY bootstrap-home /usr/local/bin/bootstrap-home
+COPY warp-init /usr/local/bin/warp-init
 
 RUN if [ "$INCLUDE_JIRA" != "true" ]; then rm -f /usr/local/bin/jira; fi \
- && chmod +x /usr/local/bin/bootstrap-home \
+ && chmod +x /usr/local/bin/bootstrap-home /usr/local/bin/warp-init \
  && if [ -f /usr/local/bin/jira ]; then chmod +x /usr/local/bin/jira; fi \
  && useradd -m -s /usr/bin/zsh -u "$APP_UID" "$APP_USER" \
- && usermod -aG sudo "$APP_USER" \
+ && usermod -aG sudo,docker "$APP_USER" \
  && install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.claude" "$APP_HOME/.config/opencode" "$APP_HOME/.github" "$APP_HOME/.jira.d" "$APP_HOME/.local/bin" "$APP_HOME/work" \
  && printf "%s ALL=(ALL) NOPASSWD:ALL\n" "$APP_USER" > "/etc/sudoers.d/$APP_USER" \
  && chmod 0440 "/etc/sudoers.d/$APP_USER"
 
-CMD ["sleep", "infinity"]
+ENTRYPOINT ["/usr/local/bin/warp-init"]
