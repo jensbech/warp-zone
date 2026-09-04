@@ -22,6 +22,9 @@ ARG NODE_MAJOR=24
 ARG PULUMI_VERSION=3.247.0
 ARG KUBECTL_VERSION=v1.36.2
 ARG K9S_VERSION=v0.51.0
+ARG DOCKER_VERSION=29.7.2
+ARG DOCKER_BUILDX_VERSION=0.36.1
+ARG DOCKER_COMPOSE_VERSION=5.5.0
 ARG PNPM_VERSION=10.33.0
 ARG YARN_VERSION=4.9.2
 ARG GO_VERSION=1.24.4
@@ -152,7 +155,24 @@ RUN apt-get update \
  && if [ "$INCLUDE_DOTNET" = "true" ]; then packages="$packages dotnet-sdk-8.0 dotnet-sdk-10.0"; fi \
  && if [ "$INCLUDE_GH" = "true" ]; then packages="$packages gh"; fi \
  && if [ "$INCLUDE_NODE" = "true" ]; then packages="$packages nodejs"; fi \
- && packages="$packages docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin" \
+ && . /etc/os-release \
+ && apt_sfx="1~${ID}.${VERSION_ID}~${VERSION_CODENAME}" \
+ && if [ -n "$DOCKER_VERSION" ]; then \
+      packages="$packages docker-ce=5:${DOCKER_VERSION}-${apt_sfx} docker-ce-cli=5:${DOCKER_VERSION}-${apt_sfx}"; \
+    else \
+      packages="$packages docker-ce docker-ce-cli"; \
+    fi \
+ && packages="$packages containerd.io" \
+ && if [ -n "$DOCKER_BUILDX_VERSION" ]; then \
+      packages="$packages docker-buildx-plugin=${DOCKER_BUILDX_VERSION}-${apt_sfx}"; \
+    else \
+      packages="$packages docker-buildx-plugin"; \
+    fi \
+ && if [ -n "$DOCKER_COMPOSE_VERSION" ]; then \
+      packages="$packages docker-compose-plugin=${DOCKER_COMPOSE_VERSION}-${apt_sfx}"; \
+    else \
+      packages="$packages docker-compose-plugin"; \
+    fi \
  && if [ "$INCLUDE_TERRAFORM" = "true" ]; then packages="$packages terraform"; fi \
  && if [ "$INCLUDE_GCLOUD" = "true" ]; then packages="$packages google-cloud-cli"; fi \
  && if [ "$INCLUDE_HELM" = "true" ]; then packages="$packages helm"; fi \
