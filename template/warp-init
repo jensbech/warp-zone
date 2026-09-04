@@ -6,6 +6,13 @@ set -uo pipefail
 
 log() { printf 'warp-init: %s\n' "$1"; }
 
+if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+  mkdir -p /sys/fs/cgroup/init
+  xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs 2>/dev/null || :
+  sed -e 's/ / +/g' -e 's/^/+/' < /sys/fs/cgroup/cgroup.controllers \
+    > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || :
+fi
+
 if command -v dockerd >/dev/null 2>&1; then
   mkdir -p /var/lib/docker /var/log
   # We are PID 1 on a fresh boot, so any pidfile or socket left in the container
