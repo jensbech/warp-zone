@@ -315,6 +315,7 @@ RUN if [ "$INCLUDE_JIRA" != "true" ]; then rm -f /usr/local/bin/jira; fi \
  && useradd -m -s /usr/bin/zsh -u "$APP_UID" "$APP_USER" \
  && usermod -aG sudo,docker "$APP_USER" \
  && install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.claude" "$APP_HOME/.config/opencode" "$APP_HOME/.github" "$APP_HOME/.jira.d" "$APP_HOME/.local/bin" "$APP_HOME/work" \
+ && chown -R "$APP_USER:$APP_USER" "$APP_HOME" \
  && printf "%s ALL=(ALL) NOPASSWD:ALL\n" "$APP_USER" > "/etc/sudoers.d/$APP_USER" \
  && chmod 0440 "/etc/sudoers.d/$APP_USER"
 
