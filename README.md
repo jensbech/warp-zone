@@ -56,7 +56,7 @@ The profile name is the **only name you pick** — your Linux username inside th
 The wizard asks for a name, a base distro, and which optional tools to include.
 
 - **Distro:** Ubuntu 24.04 LTS (default), Ubuntu 22.04 LTS, or Debian 12.
-- **Always included:** git, ripgrep, jq, fzf, bat, eza, tmux, zsh — and the Docker engine (see below).
+- **Always included:** git, ripgrep, jq, fzf, bat, eza, tmux, zsh, Claude Code (`claude`) — and the Docker engine (see below).
 - **Optional tool groups (off by default):**
   - *Languages & runtimes:* Node.js · Python 3 · Go · Rust · .NET SDK · Java · Ruby · Bun · Deno
   - *Cloud & infrastructure:* kubectl · Helm · k9s · Terraform · Pulumi · AWS CLI · Azure CLI · Google Cloud CLI
