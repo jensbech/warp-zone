@@ -318,4 +318,7 @@ RUN if [ "$INCLUDE_JIRA" != "true" ]; then rm -f /usr/local/bin/jira; fi \
  && printf "%s ALL=(ALL) NOPASSWD:ALL\n" "$APP_USER" > "/etc/sudoers.d/$APP_USER" \
  && chmod 0440 "/etc/sudoers.d/$APP_USER"
 
+RUN runuser -u "$APP_USER" -- env HOME="$APP_HOME" bash -c 'curl -fsSL https://claude.ai/install.sh | bash' \
+ && test -x "$APP_HOME/.local/bin/claude"
+
 ENTRYPOINT ["/usr/local/bin/warp-init"]

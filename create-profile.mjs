@@ -29,7 +29,7 @@ const dockerVolumeFor = (profile) => `${RESOURCE_PREFIX}${profile}-docker`;
 
 // Neutral, minimal default — a fresh Linux box with just the essentials.
 const DEFAULT_PROFILE_NAME = 'dev';
-const ALWAYS_INCLUDED = 'git, ripgrep, jq, fzf, bat, eza, tmux, zsh';
+const ALWAYS_INCLUDED = 'git, ripgrep, jq, fzf, bat, eza, tmux, zsh, Claude Code';
 
 const distroOptions = [
   { name: 'Ubuntu 24.04 LTS', value: 'ubuntu:24.04' },
