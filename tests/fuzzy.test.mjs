@@ -21,3 +21,4 @@ assert.ok(top('aws').includes('aws-cli'));
 assert.equal(filterItems('zzzzqqq', items).length, 0);
 assert.equal(filterItems('', items).length, items.length);
 console.log('fuzzy ok');
+process.exit(0);

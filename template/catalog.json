@@ -265,6 +265,7 @@
 {"id":"http-server","label":"http-server","group":"Node.js tooling","keywords":"static files serve","check":"http-server --help >/dev/null","requires":["node"],"install":{"npm":"http-server"}},
 {"id":"markdownlint","label":"markdownlint-cli","group":"Node.js tooling","keywords":"markdown lint","check":"markdownlint --version","requires":["node"],"install":{"npm":"markdownlint-cli"}},
 {"id":"codex","label":"OpenAI Codex CLI","group":"AI coding CLIs","keywords":"openai gpt agent","check":"codex --version","requires":["node"],"install":{"npm":"@openai/codex"}},
+{"id":"t3code","label":"T3 Code (agent web GUI)","group":"AI coding CLIs","keywords":"t3 theo gui web ui claude codex agents browser","check":"t3 --version","install":{"release":"https://github.com/pingdotgg/t3code/releases/download/v{version}/t3-{version}-linux-{arch}.tar.gz","gh":"pingdotgg/t3code","arch":{"amd64":"x64","arm64":"arm64"},"dir":"/opt/t3code","link":"t3"}},
 {"id":"gemini-cli","label":"Gemini CLI","group":"AI coding CLIs","keywords":"google gemini agent","check":"gemini --version","requires":["node"],"install":{"npm":"@google/gemini-cli"}},
 {"id":"opencode","label":"opencode","group":"AI coding CLIs","keywords":"agent terminal sst","check":"opencode --version","requires":["node"],"install":{"npm":"opencode-ai"}},
 {"id":"copilot-cli","label":"GitHub Copilot CLI","group":"AI coding CLIs","keywords":"github copilot agent","check":"copilot --version","requires":["node"],"install":{"npm":"@github/copilot"}},

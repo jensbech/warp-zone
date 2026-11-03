@@ -26,6 +26,8 @@ const profilesRoot = path.join(process.env.HOME ?? '', 'warp');
 // else happens to be called "dev" on this machine.
 const RESOURCE_PREFIX = 'warp-';
 const FIRST_SSH_PORT = 2200;
+const FIRST_T3CODE_PORT = 3773;
+const T3CODE_TOOL = 't3code';
 
 const containerNameFor = (profile) => `${RESOURCE_PREFIX}${profile}`;
 const imageNameFor = (profile) => `${RESOURCE_PREFIX}${profile}:latest`;
@@ -151,7 +153,8 @@ const instanceKeys = new Set([
   'PROFILE_PROMPT',
   'SSH_PORT',
   'SSH_HOSTNAME',
-  'SSH_PUBKEY'
+  'SSH_PUBKEY',
+  'T3CODE_PORT'
 ]);
 
 const structuredKeys = new Set([
@@ -162,6 +165,8 @@ const structuredKeys = new Set([
   'DOTFILES_DIR',
   'DOCKERD_ARGS',
   'INCLUDE_SSH',
+  'T3CODE_SERVE',
+  'T3CODE_ACCESS',
   'TOOLS',
   'EXTRA_APT_PACKAGES',
   ...integrationOptions.map((option) => option.value),
@@ -185,6 +190,8 @@ async function loadRecipe(rp) {
       memory: values.MEMORY,
       dotfilesDir: values.DOTFILES_DIR ?? '',
       sshEnabled: values.INCLUDE_SSH === 'true',
+      t3codeServe: values.T3CODE_SERVE === 'true',
+      t3codeAccess: values.T3CODE_ACCESS,
       selectedIntegrations: integrationOptions.filter((option) => values[option.value] === 'true').map((option) => option.value),
       selectedTools: toolsFromValues(values),
       extraApt: extraAptFromValues(values),
@@ -258,7 +265,7 @@ function portIsFree(port) {
   });
 }
 
-async function claimedSshPorts(exceptProfile) {
+async function claimedPorts(key, exceptProfile) {
   let entries;
   try {
     entries = await readdir(profilesRoot, { withFileTypes: true });
@@ -270,7 +277,7 @@ async function claimedSshPorts(exceptProfile) {
     .map(async (entry) => {
       try {
         const content = await readFile(path.join(profilesRoot, entry.name, 'profile.env'), 'utf8');
-        return Number(parseEnvFile(content).findLast(([key]) => key === 'SSH_PORT')?.[1]);
+        return Number(parseEnvFile(content).findLast(([name]) => name === key)?.[1]);
       } catch {
         return NaN;
       }
@@ -278,14 +285,32 @@ async function claimedSshPorts(exceptProfile) {
   return new Set(ports.filter(Number.isFinite));
 }
 
-async function allocateSshPort(profileName, existing) {
-  const claimed = await claimedSshPorts(profileName);
+async function allocatePort(key, first, profileName, existing) {
+  const claimed = await claimedPorts(key, profileName);
   if (existing && !claimed.has(Number(existing))) return String(existing);
-  for (let port = FIRST_SSH_PORT; port < FIRST_SSH_PORT + 500; port += 1) {
+  for (let port = first; port < first + 500; port += 1) {
     if (claimed.has(port)) continue;
     if (await portIsFree(port)) return String(port);
   }
-  throw new Error(`No free port found between ${FIRST_SSH_PORT} and ${FIRST_SSH_PORT + 500}.`);
+  throw new Error(`No free port found between ${first} and ${first + 500}.`);
+}
+
+const allocateSshPort = (profileName, existing) => allocatePort('SSH_PORT', FIRST_SSH_PORT, profileName, existing);
+const allocateT3codePort = (profileName, existing) => allocatePort('T3CODE_PORT', FIRST_T3CODE_PORT, profileName, existing);
+
+async function tailscaleRunning() {
+  if (!(await commandExists('tailscale'))) return false;
+  try {
+    const { stdout } = await execFileAsync('tailscale', ['status', '--json', '--peers=false'], { timeout: 5000 });
+    return JSON.parse(stdout).BackendState === 'Running';
+  } catch {
+    return false;
+  }
+}
+
+function withT3code(selectedTools, serve) {
+  if (!serve || selectedTools.includes(T3CODE_TOOL) || !catalogById.has(T3CODE_TOOL)) return selectedTools;
+  return [...selectedTools, T3CODE_TOOL].sort((a, b) => catalogOrder.get(a) - catalogOrder.get(b));
 }
 
 async function commandExists(command) {
@@ -420,6 +445,8 @@ function summarize(config) {
   console.log(`  ${label('Tools')}${describeTools(config.selectedTools, config.extraApt)}`);
   console.log(`  ${label('Dotfiles')}${describeDotfiles(config)}`);
   console.log(`  ${label('SSH')}${config.sshEnabled ? `ssh ${config.sshHostname || config.profileName}  ${chalk.dim(`(127.0.0.1:${config.sshPort}, key: ${config.sshPubkey})`)}` : chalk.dim(`disabled (port ${config.sshPort} reserved)`)}`);
+  const t3codeReach = config.t3codeAccess === 'tailscale' ? `localhost:${config.t3codePort} + your tailnet (port ${config.t3codePort})` : `localhost:${config.t3codePort} only`;
+  console.log(`  ${label('T3 Code')}${config.t3codeServe ? `${t3codeReach}  ${chalk.dim('(pair with: just t3 ' + config.profileName + (config.t3codeAccess === 'tailscale' ? ' qr' : '') + ')')}` : chalk.dim('not served')}`);
   console.log(`  ${label('Docker')}${chalk.dim('engine inside the profile (docker-in-docker), state on volume ' + config.dockerVolume)}`);
   if (config.recipeExtras?.length) {
     console.log(`  ${label('Extras')}${config.recipeExtras.map(([key, value]) => `${key}=${value}`).join(', ')}`);
@@ -478,8 +505,29 @@ async function promptForProfile(defaults, { startedFrom = '', configuring = fals
     extras: defaults.extraApt ?? [],
     pageSize: 12
   });
-  const selectedTools = picked.selected.slice().sort((a, b) => catalogOrder.get(a) - catalogOrder.get(b));
   const extraApt = picked.extras;
+
+  const t3codeServe = await confirm({
+    message: 'Serve T3 Code (web GUI for Claude Code / Codex) from this profile, reachable in your host browser?',
+    default: defaults.t3codeServe ?? picked.selected.includes(T3CODE_TOOL)
+  });
+  let t3codeAccess = 'local';
+  if (t3codeServe) {
+    const tailscaleUp = await tailscaleRunning();
+    t3codeAccess = await select({
+      message: 'Who can reach T3 Code?',
+      choices: [
+        { name: 'Local only (this computer)', value: 'local', description: 'Bound to 127.0.0.1 on this host.' },
+        {
+          name: `Tailscale (all devices on your tailnet)${tailscaleUp ? '' : chalk.dim(' — Tailscale is not running here')}`,
+          value: 'tailscale',
+          description: 'Served with `tailscale serve` on this host — reachable from your phone and other devices, never the public internet.'
+        }
+      ],
+      default: defaults.t3codeAccess ?? (tailscaleUp ? 'tailscale' : 'local')
+    });
+  }
+  const selectedTools = withT3code(picked.selected.slice().sort((a, b) => catalogOrder.get(a) - catalogOrder.get(b)), t3codeServe);
 
   let baseImage = defaults.baseImage;
   let appUser = defaults.appUser ?? sanitizeUser(profileName);
@@ -535,6 +583,7 @@ async function promptForProfile(defaults, { startedFrom = '', configuring = fals
   if (!validResources(cpus, memory)) throw new Error('CPU must be a positive number or "max"; memory must be like "8G", "512M", or "max".');
 
   const sshPort = await allocateSshPort(profileName, defaults.sshPort);
+  const t3codePort = t3codeServe ? await allocateT3codePort(profileName, defaults.t3codePort) : '';
 
   return {
     profileName,
@@ -554,6 +603,9 @@ async function promptForProfile(defaults, { startedFrom = '', configuring = fals
     sshEnabled,
     sshHostname,
     sshPubkey,
+    t3codeServe,
+    t3codePort,
+    t3codeAccess,
     selectedTools,
     extraApt,
     startedFrom,
@@ -586,7 +638,10 @@ async function writeProfileEnv(profileDir, config, extraEntries = []) {
     envLine('SSH_PORT', config.sshPort),
     envLine('INCLUDE_SSH', config.sshEnabled ? 'true' : 'false'),
     envLine('SSH_HOSTNAME', config.sshHostname),
-    envLine('SSH_PUBKEY', config.sshPubkey)
+    envLine('SSH_PUBKEY', config.sshPubkey),
+    envLine('T3CODE_SERVE', config.t3codeServe ? 'true' : 'false'),
+    envLine('T3CODE_PORT', config.t3codePort ?? ''),
+    envLine('T3CODE_ACCESS', config.t3codeServe ? (config.t3codeAccess ?? 'local') : 'local')
   ];
 
   for (const integration of integrationOptions) {
@@ -728,7 +783,7 @@ async function listRecipes() {
 
 async function suggestDotfiles() {
   const home = process.env.HOME ?? '';
-  for (const candidate of ['dotfiles', '.dotfiles', 'dotfiles']) {
+  for (const candidate of ['dotfiles', '.dotfiles']) {
     if (await exists(path.join(home, candidate))) return path.join(home, candidate);
   }
   return '';
@@ -797,6 +852,9 @@ async function main() {
       sshPubkey: existingValues.SSH_PUBKEY,
       sshEnabled: existingValues.INCLUDE_SSH === 'true',
       sshHostname: existingValues.SSH_HOSTNAME,
+      t3codeServe: existingValues.T3CODE_SERVE === 'true',
+      t3codePort: existingValues.T3CODE_PORT,
+      t3codeAccess: existingValues.T3CODE_ACCESS,
       selectedIntegrations: integrationOptions.filter((option) => existingValues[option.value] === 'true').map((option) => option.value),
       selectedTools: toolsFromValues(existingValues),
       extraApt: extraAptFromValues(existingValues),
@@ -824,6 +882,7 @@ async function main() {
   if (options.yes) {
     const profileName = sanitizeName(defaults.profileName);
     const appUser = defaults.appUser ?? sanitizeUser(profileName);
+    const t3codeServe = fromSaved ? (defaults.t3codeServe ?? false) : false;
     config = {
       profileName,
       containerName: containerNameFor(profileName),
@@ -842,7 +901,10 @@ async function main() {
       sshEnabled: fromSaved ? (defaults.sshEnabled ?? false) : false,
       sshHostname: options.configure ? (defaults.sshHostname ?? '') : '',
       sshPubkey: fromSaved ? (defaults.sshPubkey ?? '') : '',
-      selectedTools: fromSaved ? (defaults.selectedTools ?? []) : [],
+      t3codeServe,
+      t3codePort: t3codeServe ? await allocateT3codePort(profileName, defaults.t3codePort) : '',
+      t3codeAccess: t3codeServe ? (defaults.t3codeAccess ?? 'local') : 'local',
+      selectedTools: withT3code(fromSaved ? (defaults.selectedTools ?? []) : [], t3codeServe),
       extraApt: fromSaved ? (defaults.extraApt ?? []) : []
     };
   } else {
@@ -900,6 +962,9 @@ async function main() {
 
   console.log(chalk.bold('\nNext step — build and enter it:'));
   console.log(chalk.cyan(`  ${cmd} open ${config.profileName}`));
+  if (config.t3codeServe) {
+    console.log(chalk.dim(`Then open T3 Code in your browser: ${cmd} t3 ${config.profileName}`));
+  }
   if (savedRecipe) {
     console.log(chalk.dim(`Later, make another one from the saved recipe: ${cmd} up ${savedRecipe} <name>`));
   }
@@ -917,7 +982,9 @@ async function main() {
       CPUS: config.cpus,
       MEMORY: config.memory,
       DOTFILES_DIR: config.dotfilesDir,
-      SSH_PORT: config.sshPort
+      SSH_PORT: config.sshPort,
+      T3CODE_SERVE: config.t3codeServe ? 'true' : 'false',
+      T3CODE_PORT: config.t3codePort ?? ''
     });
     if (needsImageRebuild) {
       if (await confirm({ message: 'These changes require an image rebuild. Rebuild now?', default: false })) {
@@ -931,6 +998,7 @@ async function main() {
       const runtimeChanged = changed({
         SSH_HOSTNAME: config.sshHostname,
         SSH_PUBKEY: config.sshPubkey,
+        T3CODE_ACCESS: config.t3codeServe ? (config.t3codeAccess ?? 'local') : 'local',
         ...Object.fromEntries(integrationOptions.map((opt) => [opt.value, config.selectedIntegrations.includes(opt.value) ? 'true' : 'false']))
       });
       if (runtimeChanged) {

@@ -46,5 +46,9 @@ fi
 if remove_ssh_block "$SSH_HOSTNAME"; then
   printf 'Removed SSH alias "%s" from ~/.ssh/config.\n' "$SSH_HOSTNAME"
 fi
+if [ -f "$profile_dir/.tailscale-port" ] && command -v tailscale >/dev/null 2>&1; then
+  tailscale_unserve_port "$(cat "$profile_dir/.tailscale-port")" \
+    && printf 'Removed the Tailscale serve entry for port %s.\n' "$(cat "$profile_dir/.tailscale-port")" || true
+fi
 rm -rf "$profile_dir"
 printf '\033[1;32mDeleted profile "%s" and all its traces.\033[0m\n' "$profile"

@@ -24,6 +24,7 @@ row "$cmd up <recipe> [name]" 'Create from a recipe (if needed) and enter'
 row "$cmd open [profile]" 'Build (if needed) and enter a profile'
 row "$cmd ssh [profile]" 'SSH into a profile (if SSH enabled)'
 row "$cmd run <profile> <cmd>" 'Run a one-off command in a profile'
+row "$cmd t3 [profile] [qr]" 'Open T3 Code here, or show a QR code to pair another device'
 row "$cmd forward <ports> [profile]" 'Reach ports inside a profile from your host (via SSH)'
 
 printf '\n%bManage%b\n' "$green" "$reset"

@@ -165,6 +165,10 @@ for profile in $profiles; do
         exit 2
       fi
     fi
+    if [ "${T3CODE_SERVE:-false}" = "true" ] && [ "${T3CODE_ACCESS:-local}" = "tailscale" ] && ! tailscale_ready; then
+      printf "  ${yellow}warn${reset}  %-18s T3 Code is set to Tailscale, but Tailscale is not running on this host — start it, then: just open %s\n" "$profile" "$profile"
+      exit 2
+    fi
     printf "  ${green}ok${reset}    %-18s\n" "$profile"
   )
   rc=$?

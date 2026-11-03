@@ -55,6 +55,11 @@ if [ "${1:-}" = "--detail" ]; then
   else
     printf 'SSH: disabled (port %s reserved)\n' "$SSH_PORT"
   fi
+  if [ "${T3CODE_SERVE:-false}" = "true" ]; then
+    printf 'T3 Code: http://localhost:%s  (pair with: just t3 %s)\n' "${T3CODE_PORT:-?}" "$profile"
+  else
+    printf 'T3 Code: not served\n'
+  fi
   printf 'Dotfiles: %s\n' "${DOTFILES_DIR:-hermetic}"
   if [ "$docker_reachable" = "true" ] && [ "$state" = "running" ]; then
     inner="$(docker exec "$CONTAINER_NAME" docker info --format '{{.ServerVersion}} · {{.Images}} images · {{.ContainersRunning}} running' 2>/dev/null || true)"

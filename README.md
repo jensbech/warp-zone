@@ -1,130 +1,75 @@
 # warp-zone
 
-Isolated Linux dev containers on Docker. Each **profile** is a reusable container (Ubuntu or Debian) with the tools you pick; repos and credentials stay inside it, so your host stays clean. Every profile runs its own Docker engine (docker-in-docker), so `docker`, `compose`, `buildx` and testcontainers work inside without touching your host's daemon. Works on macOS and Linux.
-
-## Requirements
-
-| | macOS | Linux |
-| --- | --- | --- |
-| Docker | Docker Desktop, OrbStack or Colima | Docker Engine (native dockerd); your user in the `docker` group |
-| [just](https://just.systems) | any recent (`brew install just`) | 1.21 or newer |
-| Node.js | 18+ | 18+ |
-
-`./setup.sh` checks all of this (with install hints for your OS), runs `npm ci`, and installs the global `warp` command.
+Isolated Linux dev containers on Docker, for macOS and Linux hosts. Each **profile** is a container (Ubuntu or Debian) with the tools you pick and its own Docker engine. Repos and credentials stay inside; your host stays clean.
 
 ## Quick start
 
+Needs Docker, [just](https://just.systems) and Node 18+. `./setup.sh` checks them and prints install hints.
+
 ```bash
-./setup.sh      # once: checks prerequisites, installs deps and `warp`
-just new        # wizard: name, start from, tools
-just open       # build on first run, then drop into a shell
+./setup.sh   # once: checks prerequisites, installs deps and the global `warp` command
+just new     # wizard: name, recipe, tools, T3 Code
+just open    # build on first run, then enter a shell
 ```
 
-Anywhere after setup, `warp` is the same as `just` (`warp open`, `warp new`, ...). Profiles live in `~/warp/<name>`; `profile` defaults to `dev`.
+`warp <cmd>` works anywhere after setup. `[profile]` defaults to `dev`; profiles live in `~/warp/<name>`; work in `~/work`.
 
 ## Commands
 
-Run `just` (or `warp`) for a menu. `[profile]` defaults to `dev`.
+| Command | Does |
+| --- | --- |
+| `new [name]` · `configure [profile]` | Create / change a profile with the wizard |
+| `open [profile]` · `ssh [profile]` · `run <profile> <cmd>` | Enter, SSH in, run one command |
+| `t3 [profile] [qr]` | Open T3 Code in this browser, or show a QR code to pair another device |
+| `forward <ports> [profile] [local]` | Reach in-profile ports from the host (via SSH) |
+| `list` · `status [profile]` · `logs [profile]` | Inspect |
+| `start` · `stop` · `restart [profile]` | Control the container |
+| `recipes` · `save [profile] [name] [shared]` · `up <recipe> [name]` · `forget-recipe <name>` | Recipes |
+| `build` · `rebuild` · `update [profile]` · `update-all` | Images and OS packages |
+| `backup` · `restore [profile]` | `~/work` tarballs |
+| `destroy [profile]` | Delete everything for a profile (asks for the name) |
+| `doctor` · `prune` · `smoke [name]` | Diagnose, reclaim space, self-test |
 
-| Group | Command | What it does |
-| --- | --- | --- |
-| Everyday | `just new [name]` | Create a profile with the wizard |
-| | `just new-default <name>` | Create a minimal profile, no questions |
-| | `just open [profile]` | Build if needed and enter |
-| | `just ssh [profile]` | SSH in (needs SSH enabled) |
-| | `just run <profile> <cmd...>` | Run one command in a profile |
-| | `just forward <ports> [profile] [local_port]` | Reach in-profile ports from the host |
-| | `just list` / `just status [profile]` | Profiles at a glance / detail for one |
-| | `just start\|stop\|restart [profile]` | Control the container |
-| | `just logs [profile]` | Container logs |
-| Profiles & recipes | `just configure [profile]` | Re-run the wizard on a profile |
-| | `just recipes` | List recipes (local and shared) |
-| | `just up <recipe> [name]` | Create from a recipe if needed, then enter |
-| | `just new-from <recipe> [name]` | Create from a recipe, don't enter |
-| | `just save [profile] [name] [shared]` | Save a profile as a recipe |
-| | `just forget-recipe <name>` | Delete a local recipe |
-| Maintenance | `just build\|rebuild [profile]` | Build the image / rebuild and recreate the container |
-| | `just update [profile]` / `just update-all` | Upgrade OS packages inside container(s) |
-| | `just backup\|restore [profile]` | Back up / restore `~/work` |
-| | `just destroy [profile]` | Delete container, image, volumes and `~/work` (asks for the name) |
-| | `just doctor` | Check host, Docker, disk and profiles |
-| | `just prune` | Reclaim dangling images and leftovers |
-| | `just smoke [name]` | End-to-end self-test on a throwaway profile |
-| | `just setup` / `just install-global` | Run setup / (re)install `warp` |
+## Tools
 
-Docker names are the profile name with a `warp-` prefix (container `warp-dev`, volumes `warp-dev-work` and `warp-dev-docker`) and carry a `com.warp-zone.profile` label, so warp-zone only touches its own resources. The Linux user inside defaults to the profile name; work in `~/work`.
+Always included: git, ripgrep, jq, fzf, bat, eza, tmux, zsh, Claude Code, Docker. Pick more from about 270 tools in `template/catalog.json`. In the wizard, type to fuzzy-search and press space to toggle. Text that matches nothing becomes an extra distro package.
 
-## Tools and the catalog
+`profile.env` stores the result as `TOOLS='node gh t3code'` and `EXTRA_APT_PACKAGES='…'`. Pin versions with `<ID>_VERSION='x.y.z'`. `~/warp/<name>/setup.sh` runs as root at the end of each build. Apply changes with `just rebuild`.
 
-Always installed: git, ripgrep, jq, fzf, bat, eza, tmux, zsh, Claude Code and the Docker engine. Everything else comes from `template/catalog.json` (about 268 tools: languages, cloud and Kubernetes CLIs, databases, editors, linters, AI CLIs, ...).
+## T3 Code
 
-- **Search:** in the wizard's picker, type to filter, arrows to move, space to toggle, enter to confirm, Ctrl-U to clear. Text that matches nothing can be added as an extra distro package.
-- **Configure:** `profile.env` holds `TOOLS='node gh psql'` (catalog ids) and `EXTRA_APT_PACKAGES='imagemagick'`. Legacy `INCLUDE_<TOOL>='true'` flags still work. Apply changes with `just rebuild`.
-- **Pin:** `<ID>_VERSION='1.2.3'` pins any release tool (e.g. `GO_VERSION`, `KUBECTL_VERSION`); `NODE_MAJOR='22'` picks the Node line. Unpinned tools install the latest at build time.
-- **Add a tool:** add an entry to `template/catalog.json` (id, label, group, keywords, check, install) and run `node tests/catalog-check.mjs`.
-- **Anything else:** `~/warp/<name>/setup.sh` runs as root at the end of every build, like extra `RUN` lines.
+Answer yes to **"Serve T3 Code"** in the wizard (or later via `just configure`). The profile then runs [T3 Code](https://github.com/pingdotgg/t3code) and asks who can reach it:
+
+- **Local only:** `http://localhost:<T3CODE_PORT>` on this computer. Pair a browser with `just t3`.
+- **Tailscale:** the host's `tailscale serve` also publishes it to your own tailnet at `https://<this-host>.<your-tailnet>.ts.net:<T3CODE_PORT>`. It is never on the public internet. Run `just t3 <profile> qr` and scan the QR code with your phone or another device. No T3 account is needed.
+
+Pairing links are one-time and valid for 15 minutes. State lives in `~/work/.t3code`, so it survives rebuilds. Switching between local and Tailscale takes effect on the next `just open`, and `destroy` removes the serve entry. Logs: `just run <profile> "sudo tail /var/log/t3code.log"`.
 
 ## Recipes
 
-A recipe is a saved profile setup (distro, tools, pins, extra packages, build hook) in the same `KEY='value'` format as `profile.env`. Recipes appear as starting points in the wizard.
+A recipe is a saved setup in `profile.env` format. Recipes show up as starting points in the wizard.
+- **Local** recipes go in `~/.config/warp-zone/recipes`. This is the default for `just save dev my-stack`.
+- **Shared** recipes go in this repo's `recipes/`. Use `just save dev my-stack shared`.
+- A local recipe wins over a shared one with the same name.
 
-- **Local** (default): `${XDG_CONFIG_HOME:-~/.config}/warp-zone/recipes`, private to you. `just save dev my-stack`.
-- **Shared**: `recipes/` in this repo, committed. `just save dev my-stack shared`.
-- A local recipe wins over a shared one with the same name; `just recipes` shows which is which.
+## Good to know
 
-```bash
-just save api my-stack
-just up my-stack second     # new profile "second" from it, then enter
-```
-
-## Docker inside a profile
-
-The engine is nested, not shared: containers started inside a profile are invisible to the host and to other profiles. The cost is `--privileged` and a per-profile image cache (volume `warp-<name>-docker`, kept across `rebuild`, removed by `destroy`).
-
-Ports published inside a profile bind to the profile, not the host. Bridge them over SSH (enable SSH first with `just configure`):
-
-```bash
-just forward 3000 dev                  # one port
-just forward 4663,4664,4669-4673 dev   # list and ranges
-just forward 3000 dev 8080             # localhost:8080 -> profile:3000
-```
-
-If the inner engine cannot pull images but the host can, it is usually MTU (VPNs). Set `DOCKERD_ARGS='--mtu 1420'` in `profile.env` and `just rebuild`; `just doctor` flags this.
-
-## SSH and VS Code
-
-Enable SSH in the wizard; give it a host alias and a public key (default `~/.ssh/id_ed25519.pub`, falling back to any `~/.ssh/*.pub`). Password login is off. `just open` authorizes the key and writes `~/.ssh/config`; then `just ssh`, `ssh <alias>`, scp, rsync and VS Code Remote-SSH all work. sshd is published on `127.0.0.1:<SSH_PORT>` (from 2200 up, assigned at creation, recorded in `profile.env`).
-
-## Backups and rebuilds
-
-`~/work` is on a named volume, so `just rebuild` never touches it, nor the profile's Docker state. `just backup` writes a tarball to `~/warp/<name>/backups` (cap with `BACKUP_KEEP=<n>`); `just restore` replaces `~/work` from one. Only `just destroy` deletes the volumes.
-
-`just update` upgrades OS packages in place; `just rebuild` pulls a fresh base image and refreshes unpinned tools. Resources default to 2 CPUs and 8G; set `CPUS` / `MEMORY` (or `max`) in `profile.env`.
-
-## Host separation and dotfiles
-
-Profiles are hermetic by default: nothing from the host is mounted. The wizard can mount one directory read-only at `/mnt/dotfiles` (`DOTFILES_DIR`) and symlink git identity, Claude config, opencode config and Copilot instructions from it (`LINK_*` flags). Shell config always comes from the image; put personal additions in `~/.zshrc.local` or `~/.bashrc.local`.
-
-## macOS and Linux
-
-- **macOS:** Docker runs in a VM, so `max` CPU/memory means the VM's allocation and its disk fills faster (`just doctor` reports reclaimable space).
-- **Linux:** native dockerd; `max` means the whole host. Your user needs the `docker` group. Distro `docker.io` without buildx falls back to the legacy builder. `just doctor` also checks the socket, buildx, cgroup v2 and MTU.
+- **Docker inside:** the engine is nested, not shared, and needs `--privileged`. Its image cache survives `rebuild`. If pulls fail on a VPN, set `DOCKERD_ARGS='--mtu 1420'`.
+- **SSH / VS Code:** enable SSH in the wizard. `just open` then writes `~/.ssh/config`, so `ssh <alias>` and Remote-SSH work. It listens on `127.0.0.1:<SSH_PORT>`, starting at port 2200.
+- **Rebuilds:** they never touch `~/work`, which is on a volume. Only `destroy` deletes it.
+- **Hermetic by default:** optionally mount a dotfiles directory read-only to link your git identity and Claude/opencode/Copilot config.
+- **macOS vs Linux:**
+  - On macOS, `max` CPU/RAM means the Docker VM's share.
+  - On Linux it means the whole host. Your user needs the `docker` group, and without buildx builds fall back to the legacy builder.
+  - `just doctor` checks all of this.
 
 ## Development
 
-```
-cli/        wizard (create-profile.mjs, tool-picker.mjs) and launchers
-lib/        bash helpers behind the Justfile; some are copied into each profile
-template/   files stamped into every profile, plus catalog.json
-recipes/    shared recipes
-tests/      see below
-```
+`cli/` holds the wizard, `lib/` the scripts behind the Justfile, and `template/` the files copied into each profile (including the catalog).
 
-| Test | Run |
-| --- | --- |
-| Catalog consistency (`--online` also checks URLs) | `node tests/catalog-check.mjs` |
-| Picker fuzzy matching | `node tests/fuzzy.test.mjs` |
-| Linux host in a container (real dockerd: `doctor` + `smoke`) | `tests/linux/run.sh` |
-| Wizard end to end (needs `expect`) | `tests/wizard.sh` |
-| Tools actually install (long) | `tests/verify-tools.sh`, `tests/catalog-apt.sh` |
-| Full flow on a throwaway profile | `just smoke` |
+Tests:
+- `node tests/catalog-check.mjs [--online]`
+- `node tests/fuzzy.test.mjs`
+- `tests/wizard.sh` (needs `expect`)
+- `tests/linux/run.sh` runs a real Linux host in a container: `doctor` plus `smoke`
+- `just smoke`

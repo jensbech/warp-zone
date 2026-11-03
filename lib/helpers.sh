@@ -185,3 +185,40 @@ container_profile_label() {
 volume_profile_label() {
   docker volume inspect -f "{{index .Labels \"$warp_label\"}}" "$1" 2>/dev/null || true
 }
+
+tailscale_ready() {
+  command -v tailscale >/dev/null 2>&1 \
+    && tailscale status --json --peers=false 2>/dev/null | grep -q '"BackendState": *"Running"'
+}
+
+tailscale_dns_name() {
+  tailscale status --json --peers=false 2>/dev/null \
+    | awk -F'"' '/"Self"/ { self = 1 } self && $2 == "DNSName" { sub(/\.$/, "", $4); print $4; exit }'
+}
+
+tailscale_scheme() {
+  if tailscale status --json --peers=false 2>/dev/null \
+    | awk '/"CertDomains"/ { if ($0 ~ /null/) exit 1; getline; exit ($0 ~ /"/) ? 0 : 1 } END { if (NR == 0) exit 1 }'; then
+    printf 'https\n'
+  else
+    printf 'http\n'
+  fi
+}
+
+tailscale_url() {
+  printf '%s://%s:%s\n' "$(tailscale_scheme)" "$(tailscale_dns_name)" "$1"
+}
+
+tailscale_serve_port() {
+  local port="$1"
+  tailscale serve --bg --yes "--$(tailscale_scheme)=$port" "http://127.0.0.1:$port" >/dev/null
+}
+
+tailscale_unserve_port() {
+  local port="$1" scheme
+  tailscale serve status --json 2>/dev/null | grep -q "\"Proxy\": *\"http://127.0.0.1:$port\"" || return 0
+  for scheme in https http; do
+    tailscale serve --yes "--$scheme=$port" off >/dev/null 2>&1 && return 0
+  done
+  return 1
+}

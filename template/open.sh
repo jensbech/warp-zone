@@ -11,7 +11,7 @@ done
 
 while IFS= read -r var; do
   unset "$var"
-done < <(compgen -v | grep -E '^(INCLUDE_|LINK_|SSH_)' || true)
+done < <(compgen -v | grep -E '^(INCLUDE_|LINK_|SSH_|T3CODE_)' || true)
 
 . "$script_dir/profile.env"
 
@@ -23,6 +23,16 @@ dotfiles_dir="${DOTFILES_DIR:-}"
 cpus="$CPUS"
 memory="$MEMORY"
 ssh_port="$SSH_PORT"
+t3code_serve="${T3CODE_SERVE:-false}"
+t3code_port="${T3CODE_PORT:-}"
+t3code_binding=""
+if [ "$t3code_serve" = "true" ]; then
+  if [ -z "$t3code_port" ]; then
+    printf 'T3CODE_SERVE is on but T3CODE_PORT is empty in profile.env. Run: just configure %s\n' "$PROFILE_NAME" >&2
+    exit 1
+  fi
+  t3code_binding="$t3code_port"
+fi
 
 require_docker
 
@@ -80,7 +90,13 @@ if [ "$ssh_enable" = "true" ]; then
   fi
 fi
 
-container_state="$(docker container inspect -f '{{.State.Running}}' "$container_name" 2>/dev/null)" || container_state=missing
+container_info="$(docker container inspect -f '{{.State.Running}} {{index .Config.Labels "com.warp-zone.t3code"}}' "$container_name" 2>/dev/null)" || container_info=missing
+container_state="${container_info%% *}"
+if [ "$container_state" != missing ] && [ "${container_info#* }" != "$t3code_binding" ]; then
+  printf 'T3 Code settings changed; recreating the container (~/work and its Docker state are kept)...\n'
+  docker rm -f "$container_name" >/dev/null
+  container_state=missing
+fi
 
 if [ "$container_state" = missing ]; then
   if ! docker image inspect "$image_name" >/dev/null 2>&1; then
@@ -102,10 +118,15 @@ fi
   # volumes), so recreating the container costs nothing but the container itself.
   docker volume create --label "$warp_label=$PROFILE_NAME" "$work_volume" >/dev/null
   docker volume create --label "$warp_label=$PROFILE_NAME" "$docker_volume" >/dev/null
+  t3code_args=()
+  if [ "$t3code_serve" = "true" ]; then
+    t3code_args+=(-p "127.0.0.1:$t3code_port:3773" -e T3CODE_SERVE=true)
+  fi
   docker run -d \
     --name "$container_name" \
     --hostname "$PROFILE_NAME" \
     --label "$warp_label=$PROFILE_NAME" \
+    --label "com.warp-zone.t3code=$t3code_binding" \
     --privileged \
     --restart unless-stopped \
     --cpus "$cpus" \
@@ -114,6 +135,7 @@ fi
     -v "$work_volume:/home/$APP_USER/work" \
     -v "$docker_volume:/var/lib/docker" \
     ${env_args[@]+"${env_args[@]}"} \
+    ${t3code_args[@]+"${t3code_args[@]}"} \
     ${mount_args[@]+"${mount_args[@]}"} \
     "$image_name" >/dev/null
 fi
@@ -131,6 +153,9 @@ bootstrap_script='
   fi
   export SSH_ENABLE
   /usr/local/bin/bootstrap-home || exit $?
+  if [ "$T3CODE_SERVE" = true ] && ! command -v t3 >/dev/null 2>&1; then
+    rc=93
+  fi
   if ! docker info >/dev/null 2>&1; then
     printf "Waiting for the profile'\''s Docker engine..."
     i=0
@@ -156,6 +181,7 @@ docker exec \
   -e LINK_COPILOT="$link_copilot" \
   -e SSH_ENABLE="$ssh_enable" \
   -e SSH_AUTHORIZED_KEY="$ssh_authorized_key" \
+  -e T3CODE_SERVE="$t3code_serve" \
   "$container_name" sh -c "$bootstrap_script"
 bootstrap_rc=$?
 set -e
@@ -171,6 +197,11 @@ case "$bootstrap_rc" in
     printf '         Run: just rebuild %s\n' "$PROFILE_NAME" >&2
     ssh_enable=false
     ;;
+  93)
+    printf 'Warning: T3 Code is enabled but this image was built without it.\n' >&2
+    printf '         Run: just rebuild %s\n' "$PROFILE_NAME" >&2
+    t3code_serve=false
+    ;;
   92)
     printf 'The inner Docker engine did not start. Inspect it with:\n' >&2
     printf '  just run %s "sudo cat /var/log/dockerd.log"\n' "$PROFILE_NAME" >&2
@@ -181,6 +212,28 @@ esac
 # Write/refresh the host-side SSH config so `ssh <alias>` and VS Code Remote work.
 if [ "$ssh_enable" = "true" ]; then
   "$script_dir/ssh.sh" --setup-only || true
+fi
+
+tailnet_state="$script_dir/.tailscale-port"
+tailnet_port=""
+if [ "$t3code_serve" = "true" ] && [ "${T3CODE_ACCESS:-local}" = "tailscale" ]; then
+  tailnet_port="$t3code_port"
+fi
+if [ -f "$tailnet_state" ] && [ "$(cat "$tailnet_state")" != "$tailnet_port" ] && command -v tailscale >/dev/null 2>&1; then
+  tailscale_unserve_port "$(cat "$tailnet_state")" || true
+  rm -f "$tailnet_state"
+fi
+
+if [ "$t3code_serve" = "true" ]; then
+  printf 'T3 Code:   http://localhost:%s   (pair this browser with: just t3 %s)\n' "$t3code_port" "$PROFILE_NAME"
+  if [ -n "$tailnet_port" ]; then
+    if tailscale_ready && tailscale_serve_port "$tailnet_port"; then
+      printf '%s\n' "$tailnet_port" > "$tailnet_state"
+      printf 'Tailnet:   %s   (pair another device with: just t3 %s qr)\n' "$(tailscale_url "$tailnet_port")" "$PROFILE_NAME"
+    else
+      printf 'Warning: T3CODE_ACCESS is tailscale, but Tailscale is not running on this host - T3 Code is local only for now.\n' >&2
+    fi
+  fi
 fi
 
 # Without a terminal there is no shell to hand over — scripts calling open.sh

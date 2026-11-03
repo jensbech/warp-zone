@@ -142,6 +142,9 @@ doctor:
 forward ports profile=default_profile local_port='':
 	@"{{justfile_directory()}}/lib/forward.sh" '{{ports}}' '{{profile}}' '{{local_port}}'
 
+t3 profile=default_profile mode='open':
+	@"{{justfile_directory()}}/lib/t3code.sh" '{{profile}}' '{{mode}}'
+
 run profile +cmd:
 	@"{{justfile_directory()}}/lib/container.sh" run '{{profile}}' {{quote(cmd)}}
 
