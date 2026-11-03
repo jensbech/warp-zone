@@ -27,25 +27,33 @@ else
 fi
 
 orphan_containers=()
-for name in $(warp_containers); do
-  label="$(container_profile_label "$name")"
-  if [ -n "$label" ] && [ -f "$profiles_root/$label/profile.env" ]; then continue; fi
+while read -r name label; do
+  [ -n "${name:-}" ] || continue
+  if [ -n "${label:-}" ] && [ -f "$profiles_root/$label/profile.env" ]; then continue; fi
   orphan_containers+=("$name")
-done
+done < <(docker ps --all --filter "label=$warp_label" --format '{{.Names}} {{.Label "'"$warp_label"'"}}')
 
 orphan_volumes=()
-for name in $(warp_volumes); do
-  label="$(volume_profile_label "$name")"
-  if [ -n "$label" ] && [ -f "$profiles_root/$label/profile.env" ]; then continue; fi
+while read -r name label; do
+  [ -n "${name:-}" ] || continue
+  if [ -n "${label:-}" ] && [ -f "$profiles_root/$label/profile.env" ]; then continue; fi
   orphan_volumes+=("$name")
-done
+done < <(docker volume ls --filter "label=$warp_label" --format '{{.Name}} {{.Label "'"$warp_label"'"}}')
 
 orphan_images=()
-for name in $(warp_images); do
-  label="$(docker image inspect -f "{{index .Config.Labels \"$warp_label\"}}" "$name" 2>/dev/null || true)"
-  if [ -n "$label" ] && [ -f "$profiles_root/$label/profile.env" ]; then continue; fi
+while read -r name label; do
+  [ -n "${name:-}" ] || continue
+  if [ -n "${label:-}" ] && [ -f "$profiles_root/$label/profile.env" ]; then continue; fi
   orphan_images+=("$name")
-done
+done < <(
+  image_names=()
+  while IFS= read -r name; do
+    image_names+=("$name")
+  done < <(warp_images)
+  if [ "${#image_names[@]}" -gt 0 ]; then
+    docker image inspect -f '{{index .RepoTags 0}} {{index .Config.Labels "'"$warp_label"'"}}' "${image_names[@]}" 2>/dev/null || true
+  fi
+)
 
 total=$(( ${#orphan_containers[@]} + ${#orphan_volumes[@]} + ${#orphan_images[@]} ))
 if [ "$total" -eq 0 ]; then

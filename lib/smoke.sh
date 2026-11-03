@@ -12,7 +12,9 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 
 profile="${1:-smoketest}"
 keep=false
-[ "${2:-}" = "--keep" ] && keep=true
+for arg in "${@:2}"; do
+  [ "$arg" = "--keep" ] && keep=true
+done
 
 green='\033[1;32m'
 red='\033[1;31m'
@@ -40,12 +42,7 @@ cleanup() {
   docker volume rm "warp-$profile-work" "warp-$profile-docker" >/dev/null 2>&1 || true
   docker image rm "$image" >/dev/null 2>&1 || true
   rm -rf "$dir"
-  if [ -f "$HOME/.ssh/config" ]; then
-    tmp="$(mktemp)"
-    awk -v b="# >>> warp-zone:${profile} >>>" -v e="# <<< warp-zone:${profile} <<<" '
-      $0==b { skip=1 } skip!=1 { print } $0==e { skip=0 }
-    ' "$HOME/.ssh/config" > "$tmp" && mv "$tmp" "$HOME/.ssh/config" && chmod 600 "$HOME/.ssh/config"
-  fi
+  remove_ssh_block "$profile" || true
   exit "$rc"
 }
 
@@ -56,16 +53,21 @@ fi
 trap cleanup EXIT
 
 step "Create profile \"$profile\""
-"$repo_root/create-profile.sh" --dir "$profile" --yes >/dev/null
+"$repo_root/cli/create-profile.sh" --dir "$profile" --yes >/dev/null
 [ -f "$dir/profile.env" ] || die 'profile.env was not written'
 pass 'profile.env written'
+
+env_value() {
+  sed -n "s/^$1='\(.*\)'$/\1/p" "$dir/profile.env"
+}
+app_user="$(env_value APP_USER)"
 
 want_ssh=false
 for k in "$HOME"/.ssh/*.pub; do
   [ -f "$k" ] && want_ssh=true && break
 done
 if [ "$want_ssh" = "true" ]; then
-  sed -i '' "s/^INCLUDE_SSH=.*/INCLUDE_SSH='true'/" "$dir/profile.env"
+  sed_in_place "s/^INCLUDE_SSH=.*/INCLUDE_SSH='true'/" "$dir/profile.env"
   pass 'SSH enabled for this run'
 else
   printf '  %bskip%b no ~/.ssh/*.pub on this host — SSH steps will be skipped\n' "$dim" "$reset"
@@ -81,7 +83,7 @@ docker exec "$container" docker info >/dev/null 2>&1 || die 'inner docker daemon
 docker exec "$container" docker run --rm hello-world >/dev/null 2>&1 \
   || die 'could not run hello-world inside the profile'
 pass 'ran a container inside the profile'
-docker exec -u "$(sed -n "s/^APP_USER='\(.*\)'$/\1/p" "$dir/profile.env")" "$container" docker ps >/dev/null 2>&1 \
+docker exec -u "$app_user" "$container" docker ps >/dev/null 2>&1 \
   || die 'the profile user cannot talk to the inner docker socket'
 pass 'profile user is in the docker group'
 
@@ -104,7 +106,7 @@ step 'Backup and restore'
 docker exec "$container" sh -c 'rm -f /home/$APP_USER/work/marker.txt'
 backup="$(find "$dir/backups" -name 'work-*.tar.gz' | sort | tail -n1)"
 [ -n "$backup" ] || die 'no backup file was produced'
-docker exec "$container" find "/home/$(sed -n "s/^APP_USER='\(.*\)'$/\1/p" "$dir/profile.env")/work" -mindepth 1 -delete
+docker exec "$container" find "/home/$app_user/work" -mindepth 1 -delete
 docker exec -i "$container" sh -c 'tar -C /home/$APP_USER -xzf -' < "$backup" || die 'restoring the archive failed'
 got="$(docker exec "$container" sh -c 'cat /home/$APP_USER/work/marker.txt' 2>/dev/null || true)"
 [ "$got" = "$marker" ] || die 'restore did not bring the file back'
@@ -112,7 +114,7 @@ pass 'backup archive restores cleanly'
 
 if [ "$want_ssh" = "true" ]; then
   step 'SSH round-trip'
-  port="$(sed -n "s/^SSH_PORT='\(.*\)'$/\1/p" "$dir/profile.env")"
+  port="$(env_value SSH_PORT)"
   out="$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
     -o BatchMode=yes -o ConnectTimeout=10 "$profile" 'echo ssh-ok' 2>/dev/null || true)"
   [ "$out" = 'ssh-ok' ] || die "ssh $profile did not answer on 127.0.0.1:$port"

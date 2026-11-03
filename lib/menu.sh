@@ -19,17 +19,18 @@ printf '\n'
 "$root/lib/status.sh"
 
 printf '\n%bGet started%b\n' "$green" "$reset"
-row "$cmd new" 'Create a profile (interactive wizard)'
+row "$cmd new [name]" 'Create a profile (interactive wizard)'
 row "$cmd up <recipe> [name]" 'Create from a recipe (if needed) and enter'
 row "$cmd open [profile]" 'Build (if needed) and enter a profile'
 row "$cmd ssh [profile]" 'SSH into a profile (if SSH enabled)'
 row "$cmd run <profile> <cmd>" 'Run a one-off command in a profile'
-row "$cmd forward <ports> [profile]" 'Reach ports inside a profile from your Mac (via SSH)'
+row "$cmd forward <ports> [profile]" 'Reach ports inside a profile from your host (via SSH)'
 
 printf '\n%bManage%b\n' "$green" "$reset"
 row "$cmd list" 'List your profiles'
-row "$cmd recipes" 'List saved recipes'
-row "$cmd save [profile] [recipe]" "Save a profile's setup as a recipe"
+row "$cmd recipes" 'List recipes (local and repo)'
+row "$cmd save [profile] [recipe]" "Save a profile's setup as a local recipe (add: shared)"
+row "$cmd forget-recipe <name>" 'Delete a local recipe'
 row "$cmd status [profile]" 'Show profile state, resources, SSH, and backups'
 row "$cmd configure [profile]" 'Change profile settings with the wizard'
 row "$cmd start/stop [profile]" 'Control a container without changing its files'
@@ -44,6 +45,7 @@ row "$cmd prune" 'Reclaim dangling images and leftovers from deleted profiles'
 row "$cmd doctor" 'Check your setup for problems'
 row "$cmd smoke [name]" 'End-to-end self-test on a throwaway profile'
 row_danger "$cmd destroy [profile]" 'Delete a profile, its container, image, and ~/work'
+row "$cmd setup" 'One-time setup: check prerequisites, install deps and warp'
 row "$cmd install-global" 'Install the warp command for use anywhere'
 
 printf '\n%bTip: profile defaults to "dev" when omitted.%b\n' "$dim" "$reset"

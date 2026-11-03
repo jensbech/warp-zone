@@ -26,16 +26,6 @@ ssh_port="$SSH_PORT"
 
 require_docker
 
-# "max" (the default) means give the container everything the Docker VM has.
-# That ceiling is the VM's allocation, not your Mac's — Docker Desktop decides
-# how much of the host it gets, and asking for more than that fails to start.
-if [ -z "$cpus" ] || [ "$cpus" = "max" ]; then
-  cpus="$(docker info --format '{{.NCPU}}')"
-fi
-if [ -z "$memory" ] || [ "$memory" = "max" ]; then
-  memory="$(( $(docker info --format '{{.MemTotal}}') / 1024 / 1024 ))m"
-fi
-
 # Host dotfiles are optional. An empty DOTFILES_DIR keeps the profile hermetic —
 # no host mount at all.
 # DOCKERD_ARGS reaches the inner daemon as one value — building it into an array
@@ -90,11 +80,23 @@ if [ "$ssh_enable" = "true" ]; then
   fi
 fi
 
-if ! docker image inspect "$image_name" >/dev/null 2>&1; then
-  "$script_dir/build.sh"
+container_state="$(docker container inspect -f '{{.State.Running}}' "$container_name" 2>/dev/null)" || container_state=missing
+
+if [ "$container_state" = missing ]; then
+  if ! docker image inspect "$image_name" >/dev/null 2>&1; then
+    "$script_dir/build.sh"
+  fi
+
+# "max" (the default) means give the container everything the Docker VM has.
+# That ceiling is the Docker engine's allocation: the whole host on Linux, the VM's
+# share on macOS (Docker Desktop decides), and asking for more fails to start.
+if [ -z "$cpus" ] || [ "$cpus" = "max" ]; then
+  cpus="$(docker info --format '{{.NCPU}}')"
+fi
+if [ -z "$memory" ] || [ "$memory" = "max" ]; then
+  memory="$(( $(docker info --format '{{.MemTotal}}') / 1024 / 1024 ))m"
 fi
 
-if ! container_exists "$container_name"; then
   # --privileged is what makes the inner dockerd work. The two volumes carry
   # everything worth keeping: ~/work (yours) and /var/lib/docker (its images and
   # volumes), so recreating the container costs nothing but the container itself.
@@ -116,52 +118,65 @@ if ! container_exists "$container_name"; then
     "$image_name" >/dev/null
 fi
 
-if ! container_running "$container_name"; then
+if [ "$container_state" = false ]; then
   docker start "$container_name" >/dev/null
 fi
 
-probe="$(docker exec "$container_name" sh -c '
-  if [ -x /usr/sbin/sshd ]; then printf "sshd\n"; fi
-  if [ -x /usr/local/bin/bootstrap-home ]; then printf "bootstrap=/usr/local/bin/bootstrap-home\n"; fi
-' || true)"
+bootstrap_script='
+  [ -x /usr/local/bin/bootstrap-home ] || exit 90
+  rc=0
+  if [ "$SSH_ENABLE" = true ] && [ ! -x /usr/sbin/sshd ]; then
+    SSH_ENABLE=false
+    rc=91
+  fi
+  export SSH_ENABLE
+  /usr/local/bin/bootstrap-home || exit $?
+  if ! docker info >/dev/null 2>&1; then
+    printf "Waiting for the profile'\''s Docker engine..."
+    i=0
+    while [ "$i" -lt 180 ] && ! docker info >/dev/null 2>&1; do
+      sleep 0.5
+      i=$((i + 1))
+    done
+    if docker info >/dev/null 2>&1; then
+      printf " ready\n"
+    else
+      printf " not ready\n"
+      [ "$rc" -eq 0 ] && rc=92
+    fi
+  fi
+  exit "$rc"
+'
 
-if [ "$ssh_enable" = "true" ] && ! printf '%s\n' "$probe" | grep -qx 'sshd'; then
-  printf 'Warning: SSH is enabled in profile.env but this image was built without it.\n' >&2
-  printf '         Run: just rebuild %s\n' "$PROFILE_NAME" >&2
-  ssh_enable=false
-fi
+set +e
+docker exec \
+  -e LINK_GIT_IDENTITY="$link_git_identity" \
+  -e LINK_CLAUDE="$link_claude" \
+  -e LINK_OPENCODE="$link_opencode" \
+  -e LINK_COPILOT="$link_copilot" \
+  -e SSH_ENABLE="$ssh_enable" \
+  -e SSH_AUTHORIZED_KEY="$ssh_authorized_key" \
+  "$container_name" sh -c "$bootstrap_script"
+bootstrap_rc=$?
+set -e
 
-bootstrap_command="$(printf '%s\n' "$probe" | sed -n 's/^bootstrap=//p')"
-if [ -z "$bootstrap_command" ]; then
-  printf 'Profile image is missing its bootstrap command. Run: just rebuild %s\n' "$PROFILE_NAME" >&2
-  exit 1
-fi
-
-docker exec "$container_name" env \
-  LINK_GIT_IDENTITY="$link_git_identity" \
-  LINK_CLAUDE="$link_claude" \
-  LINK_OPENCODE="$link_opencode" \
-  LINK_COPILOT="$link_copilot" \
-  SSH_ENABLE="$ssh_enable" \
-  SSH_AUTHORIZED_KEY="$ssh_authorized_key" \
-  "$bootstrap_command"
-
-# The inner dockerd starts in the background, so a fresh container can hand you a
-# shell before `docker` works in it. Wait it out rather than let that race show.
-if ! docker exec "$container_name" docker info >/dev/null 2>&1; then
-  printf 'Waiting for the profile'\''s Docker engine...'
-  for _ in $(seq 1 180); do
-    if docker exec "$container_name" docker info >/dev/null 2>&1; then break; fi
-    sleep 0.5
-  done
-  if docker exec "$container_name" docker info >/dev/null 2>&1; then
-    printf ' ready\n'
-  else
-    printf ' not ready\n'
+case "$bootstrap_rc" in
+  0) ;;
+  90)
+    printf 'Profile image is missing its bootstrap command. Run: just rebuild %s\n' "$PROFILE_NAME" >&2
+    exit 1
+    ;;
+  91)
+    printf 'Warning: SSH is enabled in profile.env but this image was built without it.\n' >&2
+    printf '         Run: just rebuild %s\n' "$PROFILE_NAME" >&2
+    ssh_enable=false
+    ;;
+  92)
     printf 'The inner Docker engine did not start. Inspect it with:\n' >&2
     printf '  just run %s "sudo cat /var/log/dockerd.log"\n' "$PROFILE_NAME" >&2
-  fi
-fi
+    ;;
+  *) exit "$bootstrap_rc" ;;
+esac
 
 # Write/refresh the host-side SSH config so `ssh <alias>` and VS Code Remote work.
 if [ "$ssh_enable" = "true" ]; then

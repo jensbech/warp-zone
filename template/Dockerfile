@@ -18,308 +18,75 @@ RUN if [ "$INCLUDE_JIRA" = "true" ]; then \
 
 FROM ${BASE_IMAGE}
 
-ARG NODE_MAJOR=24
-ARG PULUMI_VERSION=3.247.0
-ARG KUBECTL_VERSION=v1.36.2
-ARG K9S_VERSION=v0.51.0
 ARG DOCKER_VERSION=29.7.2
 ARG DOCKER_BUILDX_VERSION=0.36.1
 ARG DOCKER_COMPOSE_VERSION=5.5.0
-ARG PNPM_VERSION=10.33.0
-ARG YARN_VERSION=4.9.2
-ARG GO_VERSION=1.24.4
-ARG LAZYGIT_VERSION=0.44.1
-ARG DELTA_VERSION=0.18.2
-ARG YQ_VERSION=v4.44.6
-ARG APP_USER=dev
-ARG APP_UID=1001
-ARG PROFILE_PROMPT=DEV
-ARG INCLUDE_NODE=false
-ARG INCLUDE_DOTNET=false
-ARG INCLUDE_AZURE_CLI=false
-ARG INCLUDE_PULUMI=false
-ARG INCLUDE_KUBECTL=false
-ARG INCLUDE_GH=false
-ARG INCLUDE_JIRA=false
-ARG INCLUDE_K9S=false
-ARG INCLUDE_PYTHON=false
-ARG INCLUDE_GO=false
-ARG INCLUDE_RUST=false
-ARG INCLUDE_JAVA=false
-ARG INCLUDE_RUBY=false
-ARG INCLUDE_BUN=false
-ARG INCLUDE_DENO=false
-ARG INCLUDE_HELM=false
-ARG INCLUDE_TERRAFORM=false
-ARG INCLUDE_AWS_CLI=false
-ARG INCLUDE_GCLOUD=false
-ARG INCLUDE_POSTGRES_CLIENT=false
-ARG INCLUDE_MYSQL_CLIENT=false
-ARG INCLUDE_REDIS=false
-ARG INCLUDE_SQLITE=false
-ARG INCLUDE_NEOVIM=false
-ARG INCLUDE_LAZYGIT=false
-ARG INCLUDE_DELTA=false
-ARG INCLUDE_YQ=false
-ARG INCLUDE_DIRENV=false
-ARG INCLUDE_HTTPIE=false
-ARG INCLUDE_BTOP=false
-ARG INCLUDE_SSH=false
-ARG EXTRA_APT_PACKAGES=""
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    APP_USER=${APP_USER} \
-    APP_UID=${APP_UID} \
-    APP_HOME=/home/${APP_USER} \
-    PROFILE_PROMPT=${PROFILE_PROMPT} \
-    INCLUDE_NODE=${INCLUDE_NODE} \
-    INCLUDE_DOTNET=${INCLUDE_DOTNET} \
-    INCLUDE_AZURE_CLI=${INCLUDE_AZURE_CLI} \
-    INCLUDE_PULUMI=${INCLUDE_PULUMI} \
-    INCLUDE_KUBECTL=${INCLUDE_KUBECTL} \
-    INCLUDE_GH=${INCLUDE_GH} \
-    INCLUDE_JIRA=${INCLUDE_JIRA} \
-    INCLUDE_K9S=${INCLUDE_K9S} \
-    INCLUDE_PYTHON=${INCLUDE_PYTHON} \
     RUSTUP_HOME=/usr/local/rustup \
-    PATH=/home/${APP_USER}/.local/bin:/home/${APP_USER}/.dotnet/tools:/usr/local/go/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
-
-RUN apt-get update \
- && apt-get upgrade -y \
- && packages="bash bat build-essential ca-certificates curl file fzf git gnupg iptables jq less lsb-release openssh-client procps ripgrep sudo tmux unzip vim wget xz-utils zip zsh zsh-autosuggestions zsh-syntax-highlighting" \
- && if [ "$INCLUDE_PYTHON" = "true" ]; then packages="$packages python3 python3-pip python3-venv"; fi \
- && if [ "$INCLUDE_JAVA" = "true" ]; then packages="$packages default-jdk-headless"; fi \
- && if [ "$INCLUDE_RUBY" = "true" ]; then packages="$packages ruby-full"; fi \
- && if [ "$INCLUDE_NEOVIM" = "true" ]; then packages="$packages neovim"; fi \
- && if [ "$INCLUDE_DIRENV" = "true" ]; then packages="$packages direnv"; fi \
- && if [ "$INCLUDE_HTTPIE" = "true" ]; then packages="$packages httpie"; fi \
- && if [ "$INCLUDE_SQLITE" = "true" ]; then packages="$packages sqlite3"; fi \
- && if [ "$INCLUDE_POSTGRES_CLIENT" = "true" ]; then packages="$packages postgresql-client"; fi \
- && if [ "$INCLUDE_MYSQL_CLIENT" = "true" ]; then packages="$packages default-mysql-client"; fi \
- && if [ "$INCLUDE_REDIS" = "true" ]; then packages="$packages redis-tools"; fi \
- && if [ "$INCLUDE_SSH" = "true" ]; then packages="$packages openssh-server netcat-openbsd"; fi \
- && apt-get install -y --no-install-recommends $packages \
- && if apt-cache show eza >/dev/null 2>&1; then apt-get install -y --no-install-recommends eza; fi \
- && if [ "$INCLUDE_BTOP" = "true" ]; then \
-      if apt-cache show btop >/dev/null 2>&1; then apt-get install -y --no-install-recommends btop; \
-      else apt-get install -y --no-install-recommends htop; fi; \
-    fi \
- && rm -rf /var/lib/apt/lists/*
+    PATH=/usr/local/go/bin:/usr/local/cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN . /etc/os-release \
- && codename="${VERSION_CODENAME}" \
- && ms_repo="${ID}/${VERSION_ID}" \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
  && mkdir -p /etc/apt/keyrings \
- && if [ "$INCLUDE_GH" = "true" ]; then \
-      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
-      chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
-      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list; \
-    fi \
- && if [ "$INCLUDE_NODE" = "true" ]; then \
-      curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; \
-      chmod go+r /etc/apt/keyrings/nodesource.gpg; \
-      echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list; \
-    fi \
- && if [ "$INCLUDE_AZURE_CLI" = "true" ] || [ "$INCLUDE_DOTNET" = "true" ]; then \
-      curl -sLS https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg; \
-      chmod go+r /etc/apt/keyrings/microsoft.gpg; \
-    fi \
- && if [ "$INCLUDE_AZURE_CLI" = "true" ]; then \
-      printf "Types: deb\nURIs: https://packages.microsoft.com/repos/azure-cli/\nSuites: %s\nComponents: main\nArchitectures: %s\nSigned-by: /etc/apt/keyrings/microsoft.gpg\n" "$codename" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/azure-cli.sources; \
-    fi \
- && if [ "$INCLUDE_DOTNET" = "true" ]; then \
-      printf "Types: deb\nURIs: https://packages.microsoft.com/%s/prod\nSuites: %s\nComponents: main\nArchitectures: %s\nSigned-by: /etc/apt/keyrings/microsoft.gpg\n" "$ms_repo" "$codename" "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/microsoft-prod.sources; \
-    fi \
  && curl -fsSL "https://download.docker.com/linux/${ID}/gpg" -o /etc/apt/keyrings/docker.asc \
  && chmod go+r /etc/apt/keyrings/docker.asc \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${ID} ${codename} stable" > /etc/apt/sources.list.d/docker.list \
- && if [ "$INCLUDE_TERRAFORM" = "true" ]; then \
-      curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /etc/apt/keyrings/hashicorp.gpg; \
-      chmod go+r /etc/apt/keyrings/hashicorp.gpg; \
-      echo "deb [signed-by=/etc/apt/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com ${codename} main" > /etc/apt/sources.list.d/hashicorp.list; \
-    fi \
- && if [ "$INCLUDE_GCLOUD" = "true" ]; then \
-      curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /etc/apt/keyrings/cloud-google.gpg; \
-      chmod go+r /etc/apt/keyrings/cloud-google.gpg; \
-      echo "deb [signed-by=/etc/apt/keyrings/cloud-google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list; \
-    fi \
- && if [ "$INCLUDE_HELM" = "true" ]; then \
-      curl -fsSL https://baltocdn.com/helm/signing.asc | gpg --dearmor -o /etc/apt/keyrings/helm.gpg; \
-      chmod go+r /etc/apt/keyrings/helm.gpg; \
-      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" > /etc/apt/sources.list.d/helm.list; \
-    fi
-
-RUN apt-get update \
- && packages="" \
- && if [ "$INCLUDE_AZURE_CLI" = "true" ]; then packages="$packages azure-cli"; fi \
- && if [ "$INCLUDE_DOTNET" = "true" ]; then packages="$packages dotnet-sdk-8.0 dotnet-sdk-10.0"; fi \
- && if [ "$INCLUDE_GH" = "true" ]; then packages="$packages gh"; fi \
- && if [ "$INCLUDE_NODE" = "true" ]; then packages="$packages nodejs"; fi \
- && . /etc/os-release \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${ID} ${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list \
+ && apt-get update -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/docker.list -o Dir::Etc::sourceparts=/dev/null -o APT::Get::List-Cleanup=0 \
  && apt_sfx="1~${ID}.${VERSION_ID}~${VERSION_CODENAME}" \
- && if [ -n "$DOCKER_VERSION" ]; then \
-      packages="$packages docker-ce=5:${DOCKER_VERSION}-${apt_sfx} docker-ce-cli=5:${DOCKER_VERSION}-${apt_sfx}"; \
-    else \
-      packages="$packages docker-ce docker-ce-cli"; \
-    fi \
- && packages="$packages containerd.io" \
- && if [ -n "$DOCKER_BUILDX_VERSION" ]; then \
-      packages="$packages docker-buildx-plugin=${DOCKER_BUILDX_VERSION}-${apt_sfx}"; \
-    else \
-      packages="$packages docker-buildx-plugin"; \
-    fi \
- && if [ -n "$DOCKER_COMPOSE_VERSION" ]; then \
-      packages="$packages docker-compose-plugin=${DOCKER_COMPOSE_VERSION}-${apt_sfx}"; \
-    else \
-      packages="$packages docker-compose-plugin"; \
-    fi \
- && if [ "$INCLUDE_TERRAFORM" = "true" ]; then packages="$packages terraform"; fi \
- && if [ "$INCLUDE_GCLOUD" = "true" ]; then packages="$packages google-cloud-cli"; fi \
- && if [ "$INCLUDE_HELM" = "true" ]; then packages="$packages helm"; fi \
- && if [ -n "$packages" ]; then apt-get install -y --no-install-recommends $packages; fi \
+ && docker_pkgs="containerd.io" \
+ && if [ -n "$DOCKER_VERSION" ]; then docker_pkgs="$docker_pkgs docker-ce=5:${DOCKER_VERSION}-${apt_sfx} docker-ce-cli=5:${DOCKER_VERSION}-${apt_sfx}"; else docker_pkgs="$docker_pkgs docker-ce docker-ce-cli"; fi \
+ && if [ -n "$DOCKER_BUILDX_VERSION" ]; then docker_pkgs="$docker_pkgs docker-buildx-plugin=${DOCKER_BUILDX_VERSION}-${apt_sfx}"; else docker_pkgs="$docker_pkgs docker-buildx-plugin"; fi \
+ && if [ -n "$DOCKER_COMPOSE_VERSION" ]; then docker_pkgs="$docker_pkgs docker-compose-plugin=${DOCKER_COMPOSE_VERSION}-${apt_sfx}"; else docker_pkgs="$docker_pkgs docker-compose-plugin"; fi \
+ && apt-get upgrade -y \
+ && apt-get install -y --no-install-recommends \
+      bash bat build-essential bzip2 file fzf git iptables jq less lsb-release openssh-client procps ripgrep sudo tmux unzip vim wget xz-utils zip zsh zsh-autosuggestions zsh-syntax-highlighting \
+      $docker_pkgs \
+ && if apt-cache show eza >/dev/null 2>&1; then apt-get install -y --no-install-recommends eza; fi \
  && rm -rf /var/lib/apt/lists/*
-
-RUN if [ "$INCLUDE_NODE" = "true" ]; then \
-      corepack enable; \
-      corepack prepare "pnpm@${PNPM_VERSION}" --activate; \
-      corepack prepare "yarn@${YARN_VERSION}" --activate; \
-    fi
-
-RUN if [ "$INCLUDE_PULUMI" = "true" ]; then \
-      curl -fsSL https://get.pulumi.com | sh -s -- --version "${PULUMI_VERSION}"; \
-      install /root/.pulumi/bin/pulumi /usr/local/bin/pulumi; \
-    fi
-
-RUN if [ "$INCLUDE_KUBECTL" = "true" ]; then \
-      arch="$(dpkg --print-architecture)"; \
-      case "$arch" in \
-        arm64) kubectl_arch=arm64 ;; \
-        amd64) kubectl_arch=amd64 ;; \
-        *) exit 1 ;; \
-      esac; \
-      curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${kubectl_arch}/kubectl"; \
-      chmod +x /usr/local/bin/kubectl; \
-    fi
-
-RUN if [ "$INCLUDE_K9S" = "true" ]; then \
-      arch="$(dpkg --print-architecture)"; \
-      case "$arch" in \
-        arm64) k9s_arch=arm64 ;; \
-        amd64) k9s_arch=amd64 ;; \
-        *) exit 1 ;; \
-      esac; \
-      curl -fsSLo /tmp/k9s.deb "https://github.com/derailed/k9s/releases/download/${K9S_VERSION}/k9s_linux_${k9s_arch}.deb"; \
-      apt-get update; \
-      apt-get install -y --no-install-recommends /tmp/k9s.deb; \
-      rm /tmp/k9s.deb; \
-      rm -rf /var/lib/apt/lists/*; \
-    fi
-
-RUN if [ "$INCLUDE_GO" = "true" ]; then \
-      arch="$(dpkg --print-architecture)"; \
-      curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz" -o /tmp/go.tar.gz; \
-      rm -rf /usr/local/go; \
-      tar -C /usr/local -xzf /tmp/go.tar.gz; \
-      rm /tmp/go.tar.gz; \
-    fi
-
-RUN if [ "$INCLUDE_RUST" = "true" ]; then \
-      export RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo; \
-      curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable; \
-      chmod -R a+w "$RUSTUP_HOME" "$CARGO_HOME"; \
-    fi
-
-RUN if [ "$INCLUDE_BUN" = "true" ]; then \
-      export BUN_INSTALL=/usr/local; \
-      curl -fsSL https://bun.sh/install | bash; \
-    fi
-
-RUN if [ "$INCLUDE_DENO" = "true" ]; then \
-      export DENO_INSTALL=/usr/local; \
-      curl -fsSL https://deno.land/install.sh | sh; \
-    fi
-
-RUN if [ "$INCLUDE_AWS_CLI" = "true" ]; then \
-      arch="$(dpkg --print-architecture)"; \
-      case "$arch" in \
-        arm64) aws_arch=aarch64 ;; \
-        amd64) aws_arch=x86_64 ;; \
-        *) exit 1 ;; \
-      esac; \
-      curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${aws_arch}.zip" -o /tmp/awscliv2.zip; \
-      unzip -q /tmp/awscliv2.zip -d /tmp; \
-      /tmp/aws/install; \
-      rm -rf /tmp/aws /tmp/awscliv2.zip; \
-    fi
-
-RUN if [ "$INCLUDE_LAZYGIT" = "true" ]; then \
-      arch="$(dpkg --print-architecture)"; \
-      case "$arch" in \
-        arm64) lg_arch=arm64 ;; \
-        amd64) lg_arch=x86_64 ;; \
-        *) exit 1 ;; \
-      esac; \
-      curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${LAZYGIT_VERSION}/lazygit_${LAZYGIT_VERSION}_Linux_${lg_arch}.tar.gz" -o /tmp/lazygit.tar.gz; \
-      tar -C /usr/local/bin -xzf /tmp/lazygit.tar.gz lazygit; \
-      rm /tmp/lazygit.tar.gz; \
-    fi
-
-RUN if [ "$INCLUDE_DELTA" = "true" ]; then \
-      arch="$(dpkg --print-architecture)"; \
-      curl -fsSL "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/git-delta_${DELTA_VERSION}_${arch}.deb" -o /tmp/git-delta.deb; \
-      apt-get update; \
-      apt-get install -y --no-install-recommends /tmp/git-delta.deb; \
-      rm /tmp/git-delta.deb; \
-      rm -rf /var/lib/apt/lists/*; \
-    fi
-
-RUN if [ "$INCLUDE_YQ" = "true" ]; then \
-      arch="$(dpkg --print-architecture)"; \
-      curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${arch}" -o /usr/local/bin/yq; \
-      chmod +x /usr/local/bin/yq; \
-    fi
-
-RUN if [ -n "$EXTRA_APT_PACKAGES" ]; then \
-      apt-get update; \
-      apt-get install -y --no-install-recommends $EXTRA_APT_PACKAGES; \
-      rm -rf /var/lib/apt/lists/*; \
-    fi
-
-# Key-only SSH: generate host keys and a drop-in that disables password login.
-# The host's public key is injected and sshd is started at runtime (see bootstrap).
-RUN if [ "$INCLUDE_SSH" = "true" ]; then \
-      mkdir -p /run/sshd /etc/ssh/sshd_config.d; \
-      ssh-keygen -A; \
-      printf '%s\n' \
-        'PasswordAuthentication no' \
-        'PubkeyAuthentication yes' \
-        'PermitRootLogin no' \
-        'KbdInteractiveAuthentication no' \
-        > /etc/ssh/sshd_config.d/warp-zone.conf; \
-    fi
 
 RUN git clone --depth 1 https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh \
  && rm -rf /opt/oh-my-zsh/.git
 
+ARG APP_USER=dev
+ARG APP_UID=1001
+
+RUN useradd -m -s /usr/bin/zsh -u "$APP_UID" "$APP_USER" \
+ && usermod -aG sudo,docker "$APP_USER" \
+ && install -d -o "$APP_USER" -g "$APP_USER" "/home/$APP_USER/.claude" "/home/$APP_USER/.config/opencode" "/home/$APP_USER/.github" "/home/$APP_USER/.jira.d" "/home/$APP_USER/.local/bin" "/home/$APP_USER/work" \
+ && chown -R "$APP_USER:$APP_USER" "/home/$APP_USER" \
+ && printf "%s ALL=(ALL) NOPASSWD:ALL\n" "$APP_USER" > "/etc/sudoers.d/$APP_USER" \
+ && chmod 0440 "/etc/sudoers.d/$APP_USER" \
+ && runuser -u "$APP_USER" -- env HOME="/home/$APP_USER" bash -c 'curl -fsSL https://claude.ai/install.sh | bash' \
+ && test -x "/home/$APP_USER/.local/bin/claude"
+
+COPY catalog.json install-tools.sh /usr/local/share/warp-zone/
+
+ARG TOOLS=""
+ARG LEGACY_INCLUDES=""
+ARG TOOL_VERSIONS=""
+ARG EXTRA_APT_PACKAGES=""
+
+RUN bash /usr/local/share/warp-zone/install-tools.sh
+
 COPY setup.sh /usr/local/share/warp-zone/setup.sh
 RUN bash /usr/local/share/warp-zone/setup.sh
 
+ARG INCLUDE_JIRA=false
 COPY --from=jira-builder /go/bin/jira /usr/local/bin/jira
+RUN if [ "$INCLUDE_JIRA" = "true" ]; then chmod +x /usr/local/bin/jira; else rm -f /usr/local/bin/jira; fi
+
 COPY templates /opt/warp-zone/templates
 COPY bootstrap-home /usr/local/bin/bootstrap-home
 COPY warp-init /usr/local/bin/warp-init
+RUN chmod +x /usr/local/bin/bootstrap-home /usr/local/bin/warp-init
 
-RUN if [ "$INCLUDE_JIRA" != "true" ]; then rm -f /usr/local/bin/jira; fi \
- && chmod +x /usr/local/bin/bootstrap-home /usr/local/bin/warp-init \
- && if [ -f /usr/local/bin/jira ]; then chmod +x /usr/local/bin/jira; fi \
- && useradd -m -s /usr/bin/zsh -u "$APP_UID" "$APP_USER" \
- && usermod -aG sudo,docker "$APP_USER" \
- && install -d -o "$APP_USER" -g "$APP_USER" "$APP_HOME/.claude" "$APP_HOME/.config/opencode" "$APP_HOME/.github" "$APP_HOME/.jira.d" "$APP_HOME/.local/bin" "$APP_HOME/work" \
- && chown -R "$APP_USER:$APP_USER" "$APP_HOME" \
- && printf "%s ALL=(ALL) NOPASSWD:ALL\n" "$APP_USER" > "/etc/sudoers.d/$APP_USER" \
- && chmod 0440 "/etc/sudoers.d/$APP_USER"
-
-RUN runuser -u "$APP_USER" -- env HOME="$APP_HOME" bash -c 'curl -fsSL https://claude.ai/install.sh | bash' \
- && test -x "$APP_HOME/.local/bin/claude"
+ARG PROFILE_PROMPT=DEV
+ENV APP_USER=${APP_USER} \
+    APP_UID=${APP_UID} \
+    APP_HOME=/home/${APP_USER} \
+    PROFILE_PROMPT=${PROFILE_PROMPT} \
+    PATH=/home/${APP_USER}/.local/bin:/home/${APP_USER}/.dotnet/tools:${PATH}
 
 ENTRYPOINT ["/usr/local/bin/warp-init"]

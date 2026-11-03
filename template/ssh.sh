@@ -84,6 +84,7 @@ awk -v b="$begin" -v e="$end" '
   $0==e { skip=0 }
 ' "$config" > "$tmp"
 
+new_config="$(mktemp)"
 {
   cat "$tmp"
   printf '%s\n' "$begin"
@@ -97,8 +98,11 @@ awk -v b="$begin" -v e="$end" '
   printf '  UserKnownHostsFile /dev/null\n'
   printf '  LogLevel ERROR\n'
   printf '%s\n' "$end"
-} > "$config"
-rm -f "$tmp"
+} > "$new_config"
+if ! cmp -s "$new_config" "$config"; then
+  cat "$new_config" > "$config"
+fi
+rm -f "$tmp" "$new_config"
 
 printf 'SSH ready: ssh %s   (user %s, 127.0.0.1:%s)\n' "$host_alias" "$ssh_user" "$ssh_port"
 printf 'VS Code:   Remote-SSH -> Connect to Host -> %s\n' "$host_alias"

@@ -2,12 +2,15 @@
   "name": "warp-zone",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "bin": {
-    "warp-zone": "./create-profile.mjs"
+    "warp-zone": "./cli/create-profile.mjs"
   },
   "dependencies": {
+    "@inquirer/core": "^10.3.2",
     "@inquirer/prompts": "^7.8.4",
-    "chalk": "^5.4.1",
-    "commander": "^14.0.0"
+    "chalk": "^5.4.1"
   }
 }

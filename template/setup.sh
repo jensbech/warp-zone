@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Per-profile build hook: runs as root at the end of every image build, after
-# all tool groups are installed. Add anything the INCLUDE_* toggles can't
+# all selected tools are installed. Add anything the tool catalog can't
 # express — exact package versions, config files, extra downloads — like the
 # RUN lines of a Dockerfile. Rebuild with `just rebuild <profile>` to apply.
 #

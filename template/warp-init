@@ -19,7 +19,7 @@ if command -v dockerd >/dev/null 2>&1; then
   # layer is from the previous run. dockerd refuses to start otherwise, because
   # the recorded PID gets reused by an unrelated process after a restart.
   rm -f /var/run/docker.pid /var/run/docker.sock /run/docker.pid /run/docker.sock
-  rm -f /var/run/containerd/containerd.pid /run/containerd/containerd.pid
+  rm -f /var/run/containerd/containerd.pid /run/containerd/containerd.pid /run/docker/containerd/containerd.pid
   # shellcheck disable=SC2086
   dockerd ${DOCKERD_ARGS:-} >/var/log/dockerd.log 2>&1 &
   ready=false

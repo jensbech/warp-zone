@@ -1,173 +1,130 @@
-# warp-zone 🌀
+# warp-zone
 
-Jump from macOS into a Linux dev world. `warp-zone` spins up isolated Linux dev environments on Docker — step in on your Mac, pop out in Linux.
+Isolated Linux dev containers on Docker. Each **profile** is a reusable container (Ubuntu or Debian) with the tools you pick; repos and credentials stay inside it, so your host stays clean. Every profile runs its own Docker engine (docker-in-docker), so `docker`, `compose`, `buildx` and testcontainers work inside without touching your host's daemon. Works on macOS and Linux.
 
-Each **profile** is a reusable container with your chosen distro and tools — repos and credentials stay inside it, so your host stays clean. Every profile runs **its own Docker engine** (docker-in-docker), so `docker`, `docker compose`, buildx and testcontainers all work inside the profile without ever touching your Mac's daemon.
+## Requirements
+
+| | macOS | Linux |
+| --- | --- | --- |
+| Docker | Docker Desktop, OrbStack or Colima | Docker Engine (native dockerd); your user in the `docker` group |
+| [just](https://just.systems) | any recent (`brew install just`) | 1.21 or newer |
+| Node.js | 18+ | 18+ |
+
+`./setup.sh` checks all of this (with install hints for your OS), runs `npm ci`, and installs the global `warp` command.
 
 ## Quick start
 
 ```bash
-just new          # create a profile (interactive)
-just open         # build it and drop into a shell
+./setup.sh      # once: checks prerequisites, installs deps and `warp`
+just new        # wizard: name, start from, tools
+just open       # build on first run, then drop into a shell
 ```
 
-That's it. `just open` builds the image the first time, then re-enters the same container on later runs.
+Anywhere after setup, `warp` is the same as `just` (`warp open`, `warp new`, ...). Profiles live in `~/warp/<name>`; `profile` defaults to `dev`.
 
 ## Commands
 
-Run `just` to see the menu.
+Run `just` (or `warp`) for a menu. `[profile]` defaults to `dev`.
 
-| Command | What it does |
-| --- | --- |
-| `just new` | Create a profile with the setup wizard |
-| `just up <recipe> [name]` | Create a profile from a recipe (if needed) and enter it |
-| `just new-from <recipe> [name]` | Create a profile from a saved recipe (without entering) |
-| `just recipes` | List saved recipes |
-| `just save [profile] [recipe]` | Save a profile's setup as a recipe |
-| `just open [profile]` | Build (if needed) and enter a profile |
-| `just ssh [profile]` | SSH into a profile (when SSH is enabled) |
-| `just run <profile> <cmd>` | Run a one-off command in a profile |
-| `just forward <ports> [profile] [local]` | Reach ports inside a profile from your Mac (needs SSH) |
-| `just doctor` | Check host tools, disk, profiles, and containers for problems |
-| `just list` | List your profiles |
-| `just status [profile]` | Show profile state, resources, SSH, and backup usage |
-| `just` / `warp` | Show your profiles and all commands |
-| `just start/stop/restart [profile]` | Control a container without changing its state |
-| `just backup/restore [profile]` | Save or restore the container's `~/work` directory |
-| `just configure [profile]` | Change a profile's settings with the wizard |
-| `just install-global` | Install `warp` so commands work from any directory |
-| `just build [profile]` | Build the image only |
-| `just rebuild [profile]` | Rebuild image and recreate the container |
-| `just update [profile]` | Update OS/apt packages inside a container |
-| `just update-all` | Update OS/apt packages in every container, in parallel |
-| `just logs [profile]` | Show a container's logs |
-| `just prune` | Reclaim dangling images and leftovers from deleted profiles |
-| `just smoke [name]` | End-to-end self-test on a throwaway profile |
-| `just destroy [profile]` | Permanently delete a profile, its container, image, and `~/work` |
+| Group | Command | What it does |
+| --- | --- | --- |
+| Everyday | `just new [name]` | Create a profile with the wizard |
+| | `just new-default <name>` | Create a minimal profile, no questions |
+| | `just open [profile]` | Build if needed and enter |
+| | `just ssh [profile]` | SSH in (needs SSH enabled) |
+| | `just run <profile> <cmd...>` | Run one command in a profile |
+| | `just forward <ports> [profile] [local_port]` | Reach in-profile ports from the host |
+| | `just list` / `just status [profile]` | Profiles at a glance / detail for one |
+| | `just start\|stop\|restart [profile]` | Control the container |
+| | `just logs [profile]` | Container logs |
+| Profiles & recipes | `just configure [profile]` | Re-run the wizard on a profile |
+| | `just recipes` | List recipes (local and shared) |
+| | `just up <recipe> [name]` | Create from a recipe if needed, then enter |
+| | `just new-from <recipe> [name]` | Create from a recipe, don't enter |
+| | `just save [profile] [name] [shared]` | Save a profile as a recipe |
+| | `just forget-recipe <name>` | Delete a local recipe |
+| Maintenance | `just build\|rebuild [profile]` | Build the image / rebuild and recreate the container |
+| | `just update [profile]` / `just update-all` | Upgrade OS packages inside container(s) |
+| | `just backup\|restore [profile]` | Back up / restore `~/work` |
+| | `just destroy [profile]` | Delete container, image, volumes and `~/work` (asks for the name) |
+| | `just doctor` | Check host, Docker, disk and profiles |
+| | `just prune` | Reclaim dangling images and leftovers |
+| | `just smoke [name]` | End-to-end self-test on a throwaway profile |
+| | `just setup` / `just install-global` | Run setup / (re)install `warp` |
 
-`profile` defaults to `dev` when omitted; each profile lives in `~/warp/<name>`.
+Docker names are the profile name with a `warp-` prefix (container `warp-dev`, volumes `warp-dev-work` and `warp-dev-docker`) and carry a `com.warp-zone.profile` label, so warp-zone only touches its own resources. The Linux user inside defaults to the profile name; work in `~/work`.
 
-After `just install-global`, run `warp` for a profile overview and common commands or `warp help` for help. `warp open`, `warp manage`, and every other command work from anywhere. The installer writes `~/.local/bin/warp` and adds that directory to your shell PATH when needed.
+## Tools and the catalog
 
-The profile name is the **only name you pick** — your Linux username inside the container defaults to it (so the `dev` profile logs you in as `dev`), and everything Docker sees is that name with a `warp-` prefix: container `warp-dev`, image `warp-dev:latest`, volumes `warp-dev-work` and `warp-dev-docker`. Each one also carries a `com.warp-zone.profile` label, so warp-zone only ever touches its own resources and never your other containers.
+Always installed: git, ripgrep, jq, fzf, bat, eza, tmux, zsh, Claude Code and the Docker engine. Everything else comes from `template/catalog.json` (about 268 tools: languages, cloud and Kubernetes CLIs, databases, editors, linters, AI CLIs, ...).
 
-## What's inside
+- **Search:** in the wizard's picker, type to filter, arrows to move, space to toggle, enter to confirm, Ctrl-U to clear. Text that matches nothing can be added as an extra distro package.
+- **Configure:** `profile.env` holds `TOOLS='node gh psql'` (catalog ids) and `EXTRA_APT_PACKAGES='imagemagick'`. Legacy `INCLUDE_<TOOL>='true'` flags still work. Apply changes with `just rebuild`.
+- **Pin:** `<ID>_VERSION='1.2.3'` pins any release tool (e.g. `GO_VERSION`, `KUBECTL_VERSION`); `NODE_MAJOR='22'` picks the Node line. Unpinned tools install the latest at build time.
+- **Add a tool:** add an entry to `template/catalog.json` (id, label, group, keywords, check, install) and run `node tests/catalog-check.mjs`.
+- **Anything else:** `~/warp/<name>/setup.sh` runs as root at the end of every build, like extra `RUN` lines.
 
-The wizard asks for a name, a base distro, and which optional tools to include.
+## Recipes
 
-- **Distro:** Ubuntu 24.04 LTS (default), Ubuntu 22.04 LTS, or Debian 12.
-- **Always included:** git, ripgrep, jq, fzf, bat, eza, tmux, zsh, Claude Code (`claude`) — and the Docker engine (see below).
-- **Optional tool groups (off by default):**
-  - *Languages & runtimes:* Node.js · Python 3 · Go · Rust · .NET SDK · Java · Ruby · Bun · Deno
-  - *Cloud & infrastructure:* kubectl · Helm · k9s · Terraform · Pulumi · AWS CLI · Azure CLI · Google Cloud CLI
-  - *Databases:* PostgreSQL client · MySQL/MariaDB client · Redis CLI · SQLite
-  - *CLI utilities:* GitHub CLI · jira · Neovim · lazygit · git-delta · yq · direnv · HTTPie · btop
+A recipe is a saved profile setup (distro, tools, pins, extra packages, build hook) in the same `KEY='value'` format as `profile.env`. Recipes appear as starting points in the wizard.
 
-The default is a **minimal base** — leave every tool group unchecked and you get a clean Linux box with just the essentials above. Add tool groups only when you need them.
-
-## Recipes — declarative setups
-
-A **recipe** is a saved, declarative profile setup — distro, tool groups, pinned versions, extra packages — stored in this repo under `recipes/<name>.env` so your setups are versioned in git and reproducible on demand:
+- **Local** (default): `${XDG_CONFIG_HOME:-~/.config}/warp-zone/recipes`, private to you. `just save dev my-stack`.
+- **Shared**: `recipes/` in this repo, committed. `just save dev my-stack shared`.
+- A local recipe wins over a shared one with the same name; `just recipes` shows which is which.
 
 ```bash
-just recipes                  # list saved recipes (with settings and validation)
-just up node-web api          # create profile "api" from the node-web recipe and enter it
-just save api my-stack        # save an existing profile's setup as a recipe
-just up my-stack              # ...and spin it up again anywhere, any time
+just save api my-stack
+just up my-stack second     # new profile "second" from it, then enter
 ```
-
-Saved recipes also appear as **starting points in the `just new` wizard**, so you can begin from a recipe and tweak it interactively. A recipe uses the same `KEY='value'` format as `profile.env`, minus the instance-specific keys (profile/container/image name, Linux user, SSH alias and key) — those derive from the profile name you pick. A leading `# description: ...` line is shown by `just recipes`, which also flags unrecognized keys so typos don't silently make it into builds.
-
-Beyond the tool toggles, a recipe (or any `profile.env`) can make the setup highly specific:
-
-- **Version pins** — override the image's build args, e.g. `NODE_MAJOR='22'`, `GO_VERSION='1.24.4'`, `KUBECTL_VERSION='v1.36.2'`, `K9S_VERSION`, `PNPM_VERSION`, `YARN_VERSION`, `PULUMI_VERSION`, `LAZYGIT_VERSION`, `DELTA_VERSION`, `YQ_VERSION`.
-- **Extra packages** — `EXTRA_APT_PACKAGES='postgresql-16 imagemagick'` installs additional distro packages at build time.
-- **Build hook** — every profile has a `~/warp/<name>/setup.sh` that runs as root at the end of the image build, like the `RUN` lines of a Dockerfile, for anything the flags can't express. `just save` stores it with the recipe as `recipes/<name>.setup.sh`, and `just new-from` copies it into profiles created from that recipe.
 
 ## Docker inside a profile
 
-Every profile runs its own `dockerd`, started by the container's init before you get a shell. `docker`, `docker compose`, `docker buildx` and anything that drives the socket (testcontainers, devcontainers, CI runners) all work inside the profile, and your user is already in the `docker` group — no `sudo`.
+The engine is nested, not shared: containers started inside a profile are invisible to the host and to other profiles. The cost is `--privileged` and a per-profile image cache (volume `warp-<name>-docker`, kept across `rebuild`, removed by `destroy`).
+
+Ports published inside a profile bind to the profile, not the host. Bridge them over SSH (enable SSH first with `just configure`):
 
 ```bash
-just open dev
-docker compose up          # runs on the profile's engine, not your Mac's
+just forward 3000 dev                  # one port
+just forward 4663,4664,4669-4673 dev   # list and ranges
+just forward 3000 dev 8080             # localhost:8080 -> profile:3000
 ```
 
-The engine is **nested, not shared**. Containers you start inside a profile are invisible to your Mac's Docker Desktop and to every other profile, and they cannot reach the host daemon — which is what keeps a profile hermetic. The trade-offs are real and worth knowing:
+If the inner engine cannot pull images but the host can, it is usually MTU (VPNs). Set `DOCKERD_ARGS='--mtu 1420'` in `profile.env` and `just rebuild`; `just doctor` flags this.
 
-- Profiles run with `--privileged`. That is what makes a nested engine possible.
-- Each profile keeps its own image cache in the `warp-<name>-docker` volume, so the first `docker pull` inside a new profile is cold even if your Mac already has that image. That volume survives `just rebuild` and is deleted by `just destroy`.
-- Everything lives in Docker Desktop's VM, so its disk fills faster than you'd expect. `just doctor` reports what's reclaimable.
+## SSH and VS Code
 
-### Reaching a service you started inside a profile
-
-Ports published *inside* a profile land on the **profile's** loopback, not your Mac's — there are two layers of NAT, and only the SSH port is published outward. Bridge them with `just forward`, which accepts a single port, a comma-separated list, or a range:
-
-```bash
-just forward 3000 dev                          # one port
-just forward 4663,4664,4669-4673 services-dev  # a whole compose stack
-just forward 3000 dev 8080                     # remap: localhost:8080 -> profile:3000
-```
-
-This tunnels to the profile's `127.0.0.1`, so it works with compose files that bind to loopback (`127.0.0.1:4673->3000/tcp`) without changing them. It needs SSH enabled on the profile; turn it on with `just configure <name>` and rebuild.
-
-If the profile's engine can't pull images but your Mac can, it's almost always MTU — common on VPNs. Set `DOCKERD_ARGS="--mtu 1420"` (matching your default route) in `~/warp/<name>/profile.env` and `just rebuild <name>`. `just doctor` flags this automatically.
-
-## Staying current
-
-- Every `just build` pulls the latest base image and applies OS updates, so a freshly built image starts patched.
-- `just update [profile]` upgrades all OS/apt packages (and `rustup`, if present) inside a running container.
-- Tools pinned to a version at build time (Go, Bun, Deno, kubectl, k9s, lazygit, git-delta, yq, AWS CLI) refresh when you `just rebuild`.
-
-By default a profile gets **2 CPU cores and 8G RAM**. Choose all available resources in the wizard or set `CPUS` / `MEMORY` to `max` when a workload needs more — `max` means everything the Docker VM has, so raise Docker Desktop's own allocation if that ceiling is too low. Work in `~/work` inside the container.
+Enable SSH in the wizard; give it a host alias and a public key (default `~/.ssh/id_ed25519.pub`, falling back to any `~/.ssh/*.pub`). Password login is off. `just open` authorizes the key and writes `~/.ssh/config`; then `just ssh`, `ssh <alias>`, scp, rsync and VS Code Remote-SSH all work. sshd is published on `127.0.0.1:<SSH_PORT>` (from 2200 up, assigned at creation, recorded in `profile.env`).
 
 ## Backups and rebuilds
 
-`~/work` lives on a named Docker volume, not in the container's writable layer, so **`just rebuild` never touches your work** — it swaps the image and recreates the container around the same volume. The profile's own Docker state (its images, its volumes) survives a rebuild too.
+`~/work` is on a named volume, so `just rebuild` never touches it, nor the profile's Docker state. `just backup` writes a tarball to `~/warp/<name>/backups` (cap with `BACKUP_KEEP=<n>`); `just restore` replaces `~/work` from one. Only `just destroy` deletes the volumes.
 
-Backups are therefore a safety net you reach for deliberately, not a rebuild ritual: `just backup <name>` writes a tarball of `~/work` to `~/warp/<name>/backups`, kept indefinitely, and `just restore <name>` replaces `~/work` from one you pick. To cap how many a profile keeps, set `BACKUP_KEEP=<n>` in its `profile.env` — each new backup then prunes all but the newest *n*.
+`just update` upgrades OS packages in place; `just rebuild` pulls a fresh base image and refreshes unpinned tools. Resources default to 2 CPUs and 8G; set `CPUS` / `MEMORY` (or `max`) in `profile.env`.
 
-The one command that can lose work is `just destroy`, which deletes the volume along with everything else and asks you to type the profile name first.
+## Host separation and dotfiles
 
-## Host separation
+Profiles are hermetic by default: nothing from the host is mounted. The wizard can mount one directory read-only at `/mnt/dotfiles` (`DOTFILES_DIR`) and symlink git identity, Claude config, opencode config and Copilot instructions from it (`LINK_*` flags). Shell config always comes from the image; put personal additions in `~/.zshrc.local` or `~/.bashrc.local`.
 
-A profile is **hermetic by default** — nothing from your Mac is mounted, and credentials and repos live only inside the container.
+## macOS and Linux
 
-The wizard can optionally open one read-only window to the host: pick **"Link host dotfiles"**, choose a directory (default `~/dotfiles`, mounted read-only at `/mnt/dotfiles`), and tick which pieces to bring in:
+- **macOS:** Docker runs in a VM, so `max` CPU/memory means the VM's allocation and its disk fills faster (`just doctor` reports reclaimable space).
+- **Linux:** native dockerd; `max` means the whole host. Your user needs the `docker` group. Distro `docker.io` without buildx falls back to the legacy builder. `just doctor` also checks the socket, buildx, cgroup v2 and MTU.
 
-- **Git identity** — your `user.name` / `user.email`, copied into the container's `~/.gitconfig`.
-- **Claude config** — `settings.json` and `CLAUDE.md`.
-- **opencode config** — `opencode.json` and `AGENTS.md`.
-- **GitHub Copilot instructions** — `copilot.instructions.md`.
+## Development
 
-Each linked file is a read-only symlink, so the container can never modify your host. Leave the option off and the profile stays completely sealed. (Shell config — `.zshrc` etc. — always comes from the image template, never the host. To customize the shell inside a container, put your additions in `~/.zshrc.local` or `~/.bashrc.local` — those survive every re-open, as do any `git config` changes you make inside the container.)
-
-## SSH & VS Code Remote
-
-Answer **yes** to *"Enable SSH access"* in the wizard to make a profile reachable over SSH. It then asks:
-
-- **SSH host alias** — what you'll type as `ssh <alias>` on your Mac (defaults to the profile name).
-- **Public key** — a path on your Mac (default `~/.ssh/id_ed25519.pub`). If that file doesn't exist, any keys found in `~/.ssh/*.pub` are authorized instead. Password login is always disabled.
-
-Then:
-
-```bash
-just open myprofile   # builds, authorizes your key(s), runs sshd, writes ~/.ssh/config
-just ssh myprofile    # or just: ssh <alias>
+```
+cli/        wizard (create-profile.mjs, tool-picker.mjs) and launchers
+lib/        bash helpers behind the Justfile; some are copied into each profile
+template/   files stamped into every profile, plus catalog.json
+recipes/    shared recipes
+tests/      see below
 ```
 
-Each profile publishes its sshd on a private loopback port — `127.0.0.1:<SSH_PORT>` — assigned when the profile is created (from 2200 up, skipping ports other profiles or other software already hold) and recorded in `profile.env`. That makes it an ordinary TCP connection, so `ssh`, `scp`, `rsync` and **VS Code Remote-SSH → Connect to Host → `<alias>`** all work with no `ProxyCommand` in the way. The port is published whether or not SSH is enabled, so switching SSH on later needs a rebuild of the image but never a change of address.
-
-`sshd` is started by the container's init, so it comes back automatically whenever the container starts (e.g. after a host reboot). You need a public key on your Mac — if you don't have one, run `ssh-keygen -t ed25519` and re-open the profile.
-
-## Requirements
-
-- macOS with a Docker runtime — [Docker Desktop](https://docs.docker.com/desktop/setup/install/mac-install/), OrbStack, or Colima all work; warp-zone only needs a reachable `docker` daemon
-- [`just`](https://github.com/casey/just)
-- Node.js (the wizard installs its own dependencies on first run)
-
-Run `just doctor` to check all of it at once, and `just smoke` to prove the whole thing end to end on a throwaway profile — it builds, opens, runs a container inside the profile, rebuilds to confirm `~/work` survives, round-trips a backup and an SSH session, then cleans up after itself.
-
-## Customizing a profile
-
-Need a different user, CPU/memory, or host-dotfiles setup? Use the wizard (**advanced settings** for user/CPU/memory; the **"Link host dotfiles"** prompt for `DOTFILES_DIR` and the `LINK_*` toggles), or edit `~/warp/<name>/profile.env` afterwards and run `just rebuild <name>`. Set `CPUS`/`MEMORY` to `max` for everything the Docker VM has (note that this is the VM's allocation, not your Mac's total), or a fixed value like `8` / `16G` to cap them. Set `DOTFILES_DIR=""` for a fully hermetic profile.
+| Test | Run |
+| --- | --- |
+| Catalog consistency (`--online` also checks URLs) | `node tests/catalog-check.mjs` |
+| Picker fuzzy matching | `node tests/fuzzy.test.mjs` |
+| Linux host in a container (real dockerd: `doctor` + `smoke`) | `tests/linux/run.sh` |
+| Wizard end to end (needs `expect`) | `tests/wizard.sh` |
+| Tools actually install (long) | `tests/verify-tools.sh`, `tests/catalog-apt.sh` |
+| Full flow on a throwaway profile | `just smoke` |

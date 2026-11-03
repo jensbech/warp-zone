@@ -8,8 +8,7 @@ profile="${1:-dev}"
 load_profile "$profile"
 
 require_docker
-require_container "$profile" "$CONTAINER_NAME"
-started="$(ensure_running "$CONTAINER_NAME")"
+started="$(require_running "$profile" "$CONTAINER_NAME")"
 
 stop_if_started() {
   if [ "$started" = "started" ]; then

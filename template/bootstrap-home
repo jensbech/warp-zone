@@ -17,6 +17,8 @@ link_copilot="${LINK_COPILOT:-false}"
 ssh_enable="${SSH_ENABLE:-false}"
 ssh_key="${SSH_AUTHORIZED_KEY:-}"
 
+work_owner="$(stat -c %U "$user_home/work" 2>/dev/null || true)"
+
 install -d -m 0755 -o "$user_name" -g "$user_name" \
   "$user_home/.claude" \
   "$user_home/.config/opencode" \
@@ -92,5 +94,8 @@ if [ "$ssh_enable" = "true" ] && command -v sshd >/dev/null 2>&1; then
   pgrep -x sshd >/dev/null 2>&1 || /usr/sbin/sshd
 fi
 
-chown -R "$user_name:$user_name" "$user_home/.claude" "$user_home/.config" "$user_home/.github" "$user_home/.jira.d" "$user_home/.local" "$user_home/work"
+chown -R "$user_name:$user_name" "$user_home/.claude" "$user_home/.config" "$user_home/.github" "$user_home/.jira.d" "$user_home/.local"
+if [ "$work_owner" != "$user_name" ]; then
+  chown -R "$user_name:$user_name" "$user_home/work"
+fi
 chown "$user_name:$user_name" "$user_home/.bashrc" "$user_home/.gitconfig" "$user_home/.zshenv" "$user_home/.zshrc" "$user_home"

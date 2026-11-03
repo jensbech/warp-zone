@@ -25,8 +25,18 @@ printf '\nHost tools\n'
 if command -v docker >/dev/null 2>&1; then
   have_docker=true
   ok "docker CLI installed ($(docker --version 2>/dev/null))"
+  if docker buildx version >/dev/null 2>&1; then
+    ok 'docker buildx available'
+  else
+    warn 'docker buildx is missing — builds still work but use the legacy builder'
+    if [ "$(host_os)" = "linux" ]; then
+      printf "  ${dim}Install it for faster, cached builds: sudo apt-get install docker-buildx-plugin (or your distro's docker-buildx package).${reset}\n"
+    else
+      printf "  ${dim}Install it for faster, cached builds: update Docker Desktop, or brew install docker-buildx.${reset}\n"
+    fi
+  fi
 else
-  fail 'docker is not installed or not on PATH — https://docs.docker.com/desktop/setup/install/mac-install/'
+  fail 'docker is not installed or not on PATH — https://docs.docker.com/get-started/get-docker/'
 fi
 if command -v just >/dev/null 2>&1; then
   ok "just installed ($(just --version 2>/dev/null))"
@@ -41,30 +51,56 @@ fi
 
 printf '\nDocker engine\n'
 if [ "$have_docker" = "true" ]; then
-  if docker info >/dev/null 2>&1; then
+  if engine_info="$(docker info --format '{{.ServerVersion}}|{{.NCPU}}|{{.MemTotal}}|{{.CgroupVersion}}' 2>/dev/null)"; then
     docker_up=true
-    engine_version="$(docker info --format '{{.ServerVersion}}' 2>/dev/null)"
-    engine_cpu="$(docker info --format '{{.NCPU}}' 2>/dev/null)"
-    engine_mem="$(( $(docker info --format '{{.MemTotal}}' 2>/dev/null) / 1024 / 1024 / 1024 ))"
-    ok "daemon reachable (${engine_version} · ${engine_cpu} CPU · ${engine_mem}G RAM available to profiles)"
+    IFS='|' read -r engine_version engine_cpu engine_mem_bytes engine_cgroup <<<"$engine_info"
+    ok "daemon reachable (${engine_version} · ${engine_cpu} CPU · $((engine_mem_bytes / 1024 / 1024 / 1024))G RAM available to profiles)"
+    if [ "$(host_os)" = "linux" ]; then
+      [ -n "$engine_cgroup" ] || { [ -f /sys/fs/cgroup/cgroup.controllers ] && engine_cgroup=2 || engine_cgroup=1; }
+      if [ "$engine_cgroup" = "2" ]; then
+        ok 'cgroup v2 is active'
+      else
+        warn "cgroup v${engine_cgroup} is active — the inner Docker engine in a profile works best with cgroup v2"
+        printf "  ${dim}Boot with systemd.unified_cgroup_hierarchy=1 on the kernel command line, or use a distro that defaults to cgroup v2.${reset}\n"
+      fi
+    fi
   else
-    fail 'cannot reach the Docker daemon — start Docker Desktop (or your Docker runtime)'
+    fail "cannot reach the Docker daemon — $(docker_start_hint)"
+    if [ "$(host_os)" = "linux" ] && [ "$(id -u)" != "0" ]; then
+      sock=/var/run/docker.sock
+      if [ -S "$sock" ] && [ ! -w "$sock" ]; then
+        printf "  ${dim}%s is not writable by %s.${reset}\n" "$sock" "$(id -un)"
+        if id -nG | tr ' ' '\n' | grep -Fxq docker; then
+          printf "  ${dim}You are in the docker group; check that the daemon is healthy: sudo systemctl status docker${reset}\n"
+        elif command -v getent >/dev/null 2>&1 && getent group docker | grep -Eq "[:,]$(id -un)(,|\$)"; then
+          printf "  ${dim}You were added to the docker group but this session predates it: log out and back in (or run: newgrp docker).${reset}\n"
+        else
+          printf "  ${dim}Add yourself to the docker group: sudo usermod -aG docker \"\$USER\", then log out and back in.${reset}\n"
+        fi
+      elif [ ! -S "$sock" ]; then
+        printf "  ${dim}%s does not exist: start the daemon (sudo systemctl start docker) or set DOCKER_HOST.${reset}\n" "$sock"
+      fi
+    fi
   fi
 fi
 
 printf '\nNetwork\n'
-route_mtu="$(route -n get default 2>/dev/null | awk '/mtu/ {getline; print $7}')"
+route_mtu="$(default_route_mtu)"
 if [ -n "$route_mtu" ] && [ "$route_mtu" -lt 1500 ] 2>/dev/null; then
   warn "the default route has MTU ${route_mtu} (a VPN, most likely)"
-  printf "  ${dim}Docker Desktop assumes 1500, so large image pulls can die with \"unexpected EOF\".${reset}\n"
-  printf "  ${dim}Fix the host: Docker Desktop -> Settings -> Resources -> Network -> MTU = ${route_mtu}.${reset}\n"
+  printf "  ${dim}Docker assumes 1500, so large image pulls can die with \"unexpected EOF\".${reset}\n"
+  if [ "$(host_os)" = "macos" ]; then
+    printf "  ${dim}Fix the host: Docker Desktop -> Settings -> Resources -> Network -> MTU = ${route_mtu}.${reset}\n"
+  else
+    printf "  ${dim}Fix the host: set \"mtu\": ${route_mtu} in /etc/docker/daemon.json, then: sudo systemctl restart docker${reset}\n"
+  fi
   printf "  ${dim}Fix a profile's own engine: DOCKERD_ARGS=\"--mtu ${route_mtu}\" in its profile.env, then: just rebuild <profile>${reset}\n"
 else
   ok "default route MTU ${route_mtu:-1500}"
 fi
 
 printf '\nDisk\n'
-available_kb="$(df -k "$HOME" 2>/dev/null | tail -n1 | awk '{print $4}')"
+available_kb="$(df -Pk "$HOME" 2>/dev/null | tail -n1 | awk '{print $4}')"
 if [ -n "$available_kb" ]; then
   available_gb=$((available_kb / 1024 / 1024))
   if [ "$available_gb" -lt 50 ]; then
@@ -83,6 +119,18 @@ if [ "$docker_up" = "true" ]; then
   fi
 fi
 
+containers=""
+images=""
+volumes=""
+if [ "$docker_up" = "true" ]; then
+  containers="$(docker ps --all --format '{{.Names}} {{.State}} {{.Label "'"$warp_label"'"}}' 2>/dev/null || true)"
+  images="$(docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null || true)"
+  volumes="$(docker volume ls --format '{{.Name}} {{.Label "'"$warp_label"'"}}' 2>/dev/null || true)"
+fi
+
+ports_file="$(mktemp)"
+trap 'rm -f "$ports_file"' EXIT
+
 printf '\nProfiles\n'
 profiles="$(profile_names)"
 if [ -z "$profiles" ]; then
@@ -92,20 +140,21 @@ for profile in $profiles; do
   set +e
   (
     load_profile "$profile"
+    printf '%s\n' "${SSH_PORT:-}" >> "$ports_file"
     [ "$docker_up" = "true" ] || exit 0
-    if ! container_exists "$CONTAINER_NAME"; then
+    state="$(state_from_lines "$containers" "$CONTAINER_NAME")" || {
       printf "  ${dim}%-18s not created yet — run: just open %s${reset}\n" "$profile" "$profile"
       exit 0
-    fi
-    if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+    }
+    if ! list_has "$images" "$IMAGE_NAME"; then
       printf "  ${yellow}warn${reset}  %-18s container exists but image %s is missing — run: just rebuild %s\n" "$profile" "$IMAGE_NAME" "$profile"
       exit 2
     fi
-    if ! volume_exists "$WORK_VOLUME"; then
+    if ! list_has "$(awk '{print $1}' <<<"$volumes")" "$WORK_VOLUME"; then
       printf "  ${yellow}warn${reset}  %-18s work volume %s is missing — run: just rebuild %s\n" "$profile" "$WORK_VOLUME" "$profile"
       exit 2
     fi
-    if container_running "$CONTAINER_NAME" && ! docker exec "$CONTAINER_NAME" docker info >/dev/null 2>&1; then
+    if [ "$state" = "running" ] && ! docker exec "$CONTAINER_NAME" docker info >/dev/null 2>&1; then
       printf "  ${yellow}warn${reset}  %-18s inner Docker engine is not running — check: just run %s \"sudo cat /var/log/dockerd.log\"\n" "$profile" "$profile"
       exit 2
     fi
@@ -129,33 +178,27 @@ done
 
 # Duplicate SSH ports would make one profile unreachable, and the failure looks
 # like an SSH problem rather than a config one — so name it here.
-if [ -n "$profiles" ]; then
-  dupes="$(
-    for profile in $profiles; do
-      (load_profile "$profile"; printf '%s\n' "${SSH_PORT:-}") 2>/dev/null
-    done | sort | uniq -d
-  )"
-  if [ -n "$dupes" ]; then
-    printf '\nSSH ports\n'
-    for port in $dupes; do
-      warn "port $port is claimed by more than one profile — change SSH_PORT in one of them, then: just rebuild <profile>"
-    done
-  fi
+dupes="$(grep -v '^$' "$ports_file" | sort | uniq -d || true)"
+if [ -n "$dupes" ]; then
+  printf '\nSSH ports\n'
+  for port in $dupes; do
+    warn "port $port is claimed by more than one profile — change SSH_PORT in one of them, then: just rebuild <profile>"
+  done
 fi
 
 if [ "$docker_up" = "true" ]; then
   orphan_containers=""
-  for name in $(warp_containers); do
-    label="$(container_profile_label "$name")"
-    [ -n "$label" ] && [ -f "$profiles_root/$label/profile.env" ] && continue
+  while read -r name _ label; do
+    [ -n "${name:-}" ] && [ -n "${label:-}" ] || continue
+    [ -f "$profiles_root/$label/profile.env" ] && continue
     orphan_containers="$orphan_containers $name"
-  done
+  done <<<"$containers"
   orphan_volumes=""
-  for name in $(warp_volumes); do
-    label="$(volume_profile_label "$name")"
-    [ -n "$label" ] && [ -f "$profiles_root/$label/profile.env" ] && continue
+  while read -r name label; do
+    [ -n "${name:-}" ] && [ -n "${label:-}" ] || continue
+    [ -f "$profiles_root/$label/profile.env" ] && continue
     orphan_volumes="$orphan_volumes $name"
-  done
+  done <<<"$volumes"
   if [ -n "$orphan_containers$orphan_volumes" ]; then
     printf '\nLeftovers\n'
     [ -n "$orphan_containers" ] && warn "containers with no profile:${orphan_containers}"
