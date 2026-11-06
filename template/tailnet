@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# Tailscale for this profile, from inside the container. The profile is its own
+# node on your tailnet (named after the profile); nothing is tied to the host.
+#
+#   tailnet            log in if needed (prints the login link), then publish T3 Code
+#   tailnet status     one line: off | starting | needs-login <url> | needs-approval | stopped | running <url>
+#   tailnet url        the https://<profile>.<tailnet>.ts.net URL, or nothing
+#   tailnet serve      (re)publish T3 Code on the tailnet and print the URL
+#   tailnet logout     leave the tailnet (the node disappears from the admin console)
+#
+# Settings (node name, operator, ACL tags) come from /etc/warp-zone/tailnet.env,
+# written by warp-init from the profile's TAILSCALE_TAGS.
+
+t3_port=3773
+up_log=/var/log/tailscale-up.log
+# shellcheck disable=SC1091
+[ -f /etc/warp-zone/tailnet.env ] && . /etc/warp-zone/tailnet.env
+node_name="${TAILNET_HOSTNAME:-$(hostname)}"
+operator="${TAILNET_OPERATOR:-${APP_USER:-}}"
+tags="${TAILNET_TAGS:-}"
+
+if [ "$(id -u)" -ne 0 ] && sudo -n true 2>/dev/null; then
+  ts() { sudo -n tailscale "$@"; }
+else
+  ts() { tailscale "$@"; }
+fi
+
+have_daemon() {
+  command -v tailscale >/dev/null 2>&1 && pgrep -x tailscaled >/dev/null 2>&1
+}
+
+status_json() { ts status --json 2>/dev/null; }
+json_field() { jq -r "$1 // empty" 2>/dev/null; }
+backend_state() { status_json | json_field '.BackendState'; }
+auth_url() { status_json | json_field '.AuthURL'; }
+dns_name() { status_json | json_field '.Self.DNSName' | sed 's/\.$//'; }
+https_enabled() { status_json | jq -e '(.CertDomains // []) | length > 0' >/dev/null 2>&1; }
+
+node_url() {
+  local name
+  name="$(dns_name)"
+  [ -n "$name" ] || return 1
+  if https_enabled; then
+    printf 'https://%s\n' "$name"
+  else
+    printf 'http://%s\n' "$name"
+  fi
+}
+
+up_args() {
+  printf -- '--reset --hostname=%s' "$node_name"
+  [ -n "$operator" ] && printf -- ' --operator=%s' "$operator"
+  [ -n "$tags" ] && printf -- ' --advertise-tags=%s' "$tags"
+  return 0
+}
+
+# `tailscale up` blocks until the login finishes, so it runs detached and the
+# login link is read back from `tailscale status` instead.
+start_login() {
+  # shellcheck disable=SC2046
+  ts up $(up_args) >>"$up_log" 2>&1 &
+  disown 2>/dev/null || true
+}
+
+login_refused_for_tags() {
+  [ -n "$tags" ] || return 1
+  ! pgrep -f 'tailscale up ' >/dev/null 2>&1 \
+    && tail -n 20 "$up_log" 2>/dev/null | grep -qiE 'tag|not permitted'
+}
+
+tag_hint() {
+  login_refused_for_tags || return 0
+  printf '\nThe login was refused because of the ACL tag (%s). Your tailnet policy must list it under "tagOwners" with you as an owner, e.g.\n  "tagOwners": { "%s": ["autogroup:admin"] }\nLast lines of %s:\n' "$tags" "$tags" "$up_log"
+  tail -n 5 "$up_log" 2>/dev/null | sed 's/^/  /'
+}
+
+print_status() {
+  local state url
+  have_daemon || { printf 'off\n'; return 0; }
+  state="$(backend_state)"
+  case "$state" in
+    Running)
+      url="$(node_url)" || url=''
+      printf 'running %s\n' "$url"
+      ;;
+    NeedsLogin)
+      url="$(auth_url)"
+      printf 'needs-login %s\n' "${url:--}"
+      ;;
+    NeedsMachineAuth) printf 'needs-approval\n' ;;
+    Stopped) printf 'stopped\n' ;;
+    *) printf 'starting\n' ;;
+  esac
+}
+
+ensure_serve() {
+  have_daemon || return 1
+  [ "$(backend_state)" = "Running" ] || return 1
+  if https_enabled; then
+    ts serve --bg --https=443 "http://127.0.0.1:$t3_port" >/dev/null 2>&1 || return 1
+  else
+    ts serve --bg --http=80 "http://127.0.0.1:$t3_port" >/dev/null 2>&1 || return 1
+  fi
+  node_url
+}
+
+wait_for_auth_url() {
+  local i url
+  for i in $(seq 1 30); do
+    url="$(auth_url)"
+    if [ -n "$url" ]; then printf '%s\n' "$url"; return 0; fi
+    [ "$(backend_state)" = "Running" ] && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+login_interactive() {
+  local state url i
+  if ! command -v tailscale >/dev/null 2>&1; then
+    printf 'Tailscale is not installed in this profile. On the host: just configure <profile> (T3 Code -> Tailscale), then: just rebuild <profile>\n' >&2
+    return 1
+  fi
+  if ! have_daemon; then
+    printf 'tailscaled is not running. It starts with the container when T3CODE_ACCESS=tailscale - on the host: just open <profile>\n' >&2
+    return 1
+  fi
+  state="$(backend_state)"
+  if [ "$state" = "Running" ]; then
+    printf 'Already on the tailnet as %s.\n' "$(dns_name)"
+  else
+    url="$(auth_url)"
+    if [ -z "$url" ]; then
+      start_login
+      url="$(wait_for_auth_url)" || true
+    fi
+    if [ "$(backend_state)" != "Running" ]; then
+      if [ -n "$url" ]; then
+        printf '\nLog in to Tailscale to put "%s" on your tailnet:\n\n  %s\n\n' "$node_name" "$url"
+        printf 'Waiting for the login to complete (Ctrl-C to stop waiting)...\n'
+      else
+        printf 'Waiting for tailscaled to produce a login link (see /var/log/tailscale-up.log)...\n'
+      fi
+      for i in $(seq 1 600); do
+        state="$(backend_state)"
+        [ "$state" = "Running" ] && break
+        if [ "$state" = "NeedsMachineAuth" ] && [ "$i" -eq 1 ]; then
+          printf 'The node is waiting for approval in the Tailscale admin console.\n'
+        fi
+        login_refused_for_tags && break
+        sleep 1
+      done
+    fi
+  fi
+  if [ "$(backend_state)" != "Running" ]; then
+    printf 'Still not connected (state: %s). Run `tailnet` again once you have logged in.\n' "$(backend_state)" >&2
+    tag_hint >&2
+    return 1
+  fi
+  if url="$(ensure_serve)"; then
+    printf 'Connected as %s%s. T3 Code is published on your tailnet at:\n\n  %s\n\nPair another device: just t3 <profile> qr   (on the host)\n' "$(dns_name)" "${tags:+ ($tags)}" "$url"
+  else
+    printf 'Connected as %s, but publishing T3 Code failed. Try again with: tailnet serve\n' "$(dns_name)" >&2
+    return 1
+  fi
+}
+
+case "${1:-login}" in
+  login | up) login_interactive ;;
+  _up)
+    # shellcheck disable=SC2046
+    exec tailscale up $(up_args)
+    ;;
+  status) print_status ;;
+  url) [ "$(print_status | cut -d' ' -f1)" = "running" ] && node_url ;;
+  serve)
+    url="$(ensure_serve)" || { printf 'Not on the tailnet yet - run: tailnet\n' >&2; exit 1; }
+    printf '%s\n' "$url"
+    ;;
+  logout | down)
+    have_daemon || exit 0
+    ts serve reset >/dev/null 2>&1 || true
+    ts logout
+    ;;
+  -h | --help | help)
+    sed -n '4,11p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+  *)
+    printf 'Unknown command: %s (try: tailnet help)\n' "$1" >&2
+    exit 1
+    ;;
+esac

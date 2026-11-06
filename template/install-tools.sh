@@ -83,7 +83,7 @@ add_repo() {
   keyring="/etc/apt/keyrings/${keyname:-$name}.gpg"
   mkdir -p /etc/apt/keyrings
   if [ ! -f "$keyring" ]; then
-    key="$(jq -r '.key' <<< "$repo")"
+    key="$(fill_template "$(jq -r '.key' <<< "$repo")" "$keyring")"
     if [ "$(jq -r '.dearmor' <<< "$repo")" = "true" ]; then
       curl_get "$key" | gpg --dearmor -o "$keyring"
     else

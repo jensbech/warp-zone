@@ -37,6 +37,11 @@ if [ "$reply" != "$profile" ]; then
   exit 1
 fi
 
+if docker exec "$CONTAINER_NAME" tailnet status 2>/dev/null | grep -qv '^off'; then
+  docker exec "$CONTAINER_NAME" timeout 20 tailnet logout >/dev/null 2>&1 \
+    && printf 'Logged the profile out of your tailnet.\n' \
+    || printf '\033[33mNote: could not log the node out of Tailscale - remove "%s" in the admin console.\033[0m\n' "$profile"
+fi
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker volume rm "$WORK_VOLUME" "$DOCKER_VOLUME" >/dev/null 2>&1 || true
 if [ -n "$IMAGE_NAME" ] && docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
@@ -45,10 +50,6 @@ if [ -n "$IMAGE_NAME" ] && docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; t
 fi
 if remove_ssh_block "$SSH_HOSTNAME"; then
   printf 'Removed SSH alias "%s" from ~/.ssh/config.\n' "$SSH_HOSTNAME"
-fi
-if [ -f "$profile_dir/.tailscale-port" ] && command -v tailscale >/dev/null 2>&1; then
-  tailscale_unserve_port "$(cat "$profile_dir/.tailscale-port")" \
-    && printf 'Removed the Tailscale serve entry for port %s.\n' "$(cat "$profile_dir/.tailscale-port")" || true
 fi
 rm -rf "$profile_dir"
 printf '\033[1;32mDeleted profile "%s" and all its traces.\033[0m\n' "$profile"

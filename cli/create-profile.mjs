@@ -28,6 +28,8 @@ const RESOURCE_PREFIX = 'warp-';
 const FIRST_SSH_PORT = 2200;
 const FIRST_T3CODE_PORT = 3773;
 const T3CODE_TOOL = 't3code';
+const TAILSCALE_TOOL = 'tailscale';
+const DEFAULT_TAILSCALE_TAGS = 'tag:warp';
 
 const containerNameFor = (profile) => `${RESOURCE_PREFIX}${profile}`;
 const imageNameFor = (profile) => `${RESOURCE_PREFIX}${profile}:latest`;
@@ -167,6 +169,7 @@ const structuredKeys = new Set([
   'INCLUDE_SSH',
   'T3CODE_SERVE',
   'T3CODE_ACCESS',
+  'TAILSCALE_TAGS',
   'TOOLS',
   'EXTRA_APT_PACKAGES',
   ...integrationOptions.map((option) => option.value),
@@ -192,6 +195,7 @@ async function loadRecipe(rp) {
       sshEnabled: values.INCLUDE_SSH === 'true',
       t3codeServe: values.T3CODE_SERVE === 'true',
       t3codeAccess: values.T3CODE_ACCESS,
+      tailscaleTags: values.TAILSCALE_TAGS,
       selectedIntegrations: integrationOptions.filter((option) => values[option.value] === 'true').map((option) => option.value),
       selectedTools: toolsFromValues(values),
       extraApt: extraAptFromValues(values),
@@ -298,19 +302,13 @@ async function allocatePort(key, first, profileName, existing) {
 const allocateSshPort = (profileName, existing) => allocatePort('SSH_PORT', FIRST_SSH_PORT, profileName, existing);
 const allocateT3codePort = (profileName, existing) => allocatePort('T3CODE_PORT', FIRST_T3CODE_PORT, profileName, existing);
 
-async function tailscaleRunning() {
-  if (!(await commandExists('tailscale'))) return false;
-  try {
-    const { stdout } = await execFileAsync('tailscale', ['status', '--json', '--peers=false'], { timeout: 5000 });
-    return JSON.parse(stdout).BackendState === 'Running';
-  } catch {
-    return false;
-  }
-}
-
-function withT3code(selectedTools, serve) {
-  if (!serve || selectedTools.includes(T3CODE_TOOL) || !catalogById.has(T3CODE_TOOL)) return selectedTools;
-  return [...selectedTools, T3CODE_TOOL].sort((a, b) => catalogOrder.get(a) - catalogOrder.get(b));
+function withT3code(selectedTools, serve, access = 'local') {
+  if (!serve) return selectedTools;
+  const wanted = [T3CODE_TOOL];
+  if (access === 'tailscale') wanted.push(TAILSCALE_TOOL);
+  const added = wanted.filter((id) => !selectedTools.includes(id) && catalogById.has(id));
+  if (!added.length) return selectedTools;
+  return [...selectedTools, ...added].sort((a, b) => catalogOrder.get(a) - catalogOrder.get(b));
 }
 
 async function commandExists(command) {
@@ -378,6 +376,7 @@ async function copyTemplateProfile(profileDir) {
     'install-tools.sh',
     'bootstrap-home',
     'warp-init',
+    'tailnet',
     'build.sh',
     'open.sh',
     'rebuild.sh',
@@ -388,7 +387,7 @@ async function copyTemplateProfile(profileDir) {
   for (const file of files) {
     await copyFile(path.join(templateDir, file), path.join(profileDir, file));
   }
-  for (const file of ['bootstrap-home', 'warp-init', 'build.sh', 'open.sh', 'rebuild.sh', 'ssh.sh']) {
+  for (const file of ['bootstrap-home', 'warp-init', 'tailnet', 'build.sh', 'open.sh', 'rebuild.sh', 'ssh.sh']) {
     await chmod(path.join(profileDir, file), 0o755);
   }
 
@@ -445,7 +444,7 @@ function summarize(config) {
   console.log(`  ${label('Tools')}${describeTools(config.selectedTools, config.extraApt)}`);
   console.log(`  ${label('Dotfiles')}${describeDotfiles(config)}`);
   console.log(`  ${label('SSH')}${config.sshEnabled ? `ssh ${config.sshHostname || config.profileName}  ${chalk.dim(`(127.0.0.1:${config.sshPort}, key: ${config.sshPubkey})`)}` : chalk.dim(`disabled (port ${config.sshPort} reserved)`)}`);
-  const t3codeReach = config.t3codeAccess === 'tailscale' ? `localhost:${config.t3codePort} + your tailnet (port ${config.t3codePort})` : `localhost:${config.t3codePort} only`;
+  const t3codeReach = config.t3codeAccess === 'tailscale' ? `localhost:${config.t3codePort} + https://${config.profileName}.<your-tailnet>.ts.net  ${chalk.dim('(own tailnet node tagged ' + (config.tailscaleTags || 'untagged') + '; log in once with `tailnet` inside)')}` : `localhost:${config.t3codePort} only`;
   console.log(`  ${label('T3 Code')}${config.t3codeServe ? `${t3codeReach}  ${chalk.dim('(pair with: just t3 ' + config.profileName + (config.t3codeAccess === 'tailscale' ? ' qr' : '') + ')')}` : chalk.dim('not served')}`);
   console.log(`  ${label('Docker')}${chalk.dim('engine inside the profile (docker-in-docker), state on volume ' + config.dockerVolume)}`);
   if (config.recipeExtras?.length) {
@@ -513,21 +512,27 @@ async function promptForProfile(defaults, { startedFrom = '', configuring = fals
   });
   let t3codeAccess = 'local';
   if (t3codeServe) {
-    const tailscaleUp = await tailscaleRunning();
     t3codeAccess = await select({
       message: 'Who can reach T3 Code?',
       choices: [
         { name: 'Local only (this computer)', value: 'local', description: 'Bound to 127.0.0.1 on this host.' },
         {
-          name: `Tailscale (all devices on your tailnet)${tailscaleUp ? '' : chalk.dim(' — Tailscale is not running here')}`,
+          name: 'Tailscale (all devices on your tailnet)',
           value: 'tailscale',
-          description: 'Served with `tailscale serve` on this host — reachable from your phone and other devices, never the public internet.'
+          description: 'The profile joins your tailnet as its own machine, named after the profile, and publishes T3 Code at https://<profile>.<tailnet>.ts.net. Nothing is tied to this host. Log in once with `tailnet` inside the shell.'
         }
       ],
-      default: defaults.t3codeAccess ?? (tailscaleUp ? 'tailscale' : 'local')
+      default: defaults.t3codeAccess ?? 'local'
     });
   }
-  const selectedTools = withT3code(picked.selected.slice().sort((a, b) => catalogOrder.get(a) - catalogOrder.get(b)), t3codeServe);
+  let tailscaleTags = defaults.tailscaleTags ?? DEFAULT_TAILSCALE_TAGS;
+  if (t3codeAccess === 'tailscale') {
+    tailscaleTags = (await input({
+      message: 'Tailscale ACL tag(s) for this node (comma-separated; must exist under "tagOwners" in your tailnet policy)',
+      default: tailscaleTags
+    })).trim();
+  }
+  const selectedTools = withT3code(picked.selected.slice().sort((a, b) => catalogOrder.get(a) - catalogOrder.get(b)), t3codeServe, t3codeAccess);
 
   let baseImage = defaults.baseImage;
   let appUser = defaults.appUser ?? sanitizeUser(profileName);
@@ -606,6 +611,7 @@ async function promptForProfile(defaults, { startedFrom = '', configuring = fals
     t3codeServe,
     t3codePort,
     t3codeAccess,
+    tailscaleTags,
     selectedTools,
     extraApt,
     startedFrom,
@@ -641,7 +647,8 @@ async function writeProfileEnv(profileDir, config, extraEntries = []) {
     envLine('SSH_PUBKEY', config.sshPubkey),
     envLine('T3CODE_SERVE', config.t3codeServe ? 'true' : 'false'),
     envLine('T3CODE_PORT', config.t3codePort ?? ''),
-    envLine('T3CODE_ACCESS', config.t3codeServe ? (config.t3codeAccess ?? 'local') : 'local')
+    envLine('T3CODE_ACCESS', config.t3codeServe ? (config.t3codeAccess ?? 'local') : 'local'),
+    envLine('TAILSCALE_TAGS', config.tailscaleTags ?? DEFAULT_TAILSCALE_TAGS)
   ];
 
   for (const integration of integrationOptions) {
@@ -855,6 +862,7 @@ async function main() {
       t3codeServe: existingValues.T3CODE_SERVE === 'true',
       t3codePort: existingValues.T3CODE_PORT,
       t3codeAccess: existingValues.T3CODE_ACCESS,
+      tailscaleTags: existingValues.TAILSCALE_TAGS,
       selectedIntegrations: integrationOptions.filter((option) => existingValues[option.value] === 'true').map((option) => option.value),
       selectedTools: toolsFromValues(existingValues),
       extraApt: extraAptFromValues(existingValues),
@@ -904,7 +912,8 @@ async function main() {
       t3codeServe,
       t3codePort: t3codeServe ? await allocateT3codePort(profileName, defaults.t3codePort) : '',
       t3codeAccess: t3codeServe ? (defaults.t3codeAccess ?? 'local') : 'local',
-      selectedTools: withT3code(fromSaved ? (defaults.selectedTools ?? []) : [], t3codeServe),
+      tailscaleTags: defaults.tailscaleTags ?? DEFAULT_TAILSCALE_TAGS,
+      selectedTools: withT3code(fromSaved ? (defaults.selectedTools ?? []) : [], t3codeServe, t3codeServe ? (defaults.t3codeAccess ?? 'local') : 'local'),
       extraApt: fromSaved ? (defaults.extraApt ?? []) : []
     };
   } else {
@@ -964,6 +973,9 @@ async function main() {
   console.log(chalk.cyan(`  ${cmd} open ${config.profileName}`));
   if (config.t3codeServe) {
     console.log(chalk.dim(`Then open T3 Code in your browser: ${cmd} t3 ${config.profileName}`));
+    if (config.t3codeAccess === 'tailscale') {
+      console.log(chalk.dim(`Inside the shell, run \`tailnet\` once to log the profile in to your tailnet; then: ${cmd} t3 ${config.profileName} qr`));
+    }
   }
   if (savedRecipe) {
     console.log(chalk.dim(`Later, make another one from the saved recipe: ${cmd} up ${savedRecipe} <name>`));
@@ -984,7 +996,9 @@ async function main() {
       DOTFILES_DIR: config.dotfilesDir,
       SSH_PORT: config.sshPort,
       T3CODE_SERVE: config.t3codeServe ? 'true' : 'false',
-      T3CODE_PORT: config.t3codePort ?? ''
+      T3CODE_PORT: config.t3codePort ?? '',
+      T3CODE_ACCESS: config.t3codeServe ? (config.t3codeAccess ?? 'local') : 'local',
+      TAILSCALE_TAGS: config.tailscaleTags ?? DEFAULT_TAILSCALE_TAGS
     });
     if (needsImageRebuild) {
       if (await confirm({ message: 'These changes require an image rebuild. Rebuild now?', default: false })) {
@@ -998,7 +1012,6 @@ async function main() {
       const runtimeChanged = changed({
         SSH_HOSTNAME: config.sshHostname,
         SSH_PUBKEY: config.sshPubkey,
-        T3CODE_ACCESS: config.t3codeServe ? (config.t3codeAccess ?? 'local') : 'local',
         ...Object.fromEntries(integrationOptions.map((opt) => [opt.value, config.selectedIntegrations.includes(opt.value) ? 'true' : 'false']))
       });
       if (runtimeChanged) {

@@ -31,15 +31,28 @@ fi
 base_url="http://localhost:$T3CODE_PORT"
 tailnet_url=""
 if [ "${T3CODE_ACCESS:-local}" = "tailscale" ]; then
-  if tailscale_ready && tailscale_serve_port "$T3CODE_PORT"; then
-    printf '%s\n' "$T3CODE_PORT" > "$(profile_dir "$profile")/.tailscale-port"
-    tailnet_url="$(tailscale_url "$T3CODE_PORT")"
-  else
-    printf 'Warning: T3CODE_ACCESS is tailscale, but Tailscale is not running on this host.\n' >&2
-  fi
+  tailnet_status="$(docker exec "$CONTAINER_NAME" tailnet status 2>/dev/null || printf 'off')"
+  case "${tailnet_status%% *}" in
+    running)
+      tailnet_url="$(docker exec "$CONTAINER_NAME" tailnet serve 2>/dev/null || true)"
+      ;;
+    needs-login)
+      printf 'Warning: this profile is not logged in to Tailscale yet. Inside the shell, run: tailnet\n' >&2
+      login_url="${tailnet_status#* }"
+      [ -n "$login_url" ] && [ "$login_url" != "-" ] && printf '         or log in now: %s\n' "$login_url" >&2
+      ;;
+    off)
+      printf 'Warning: Tailscale is not running in this profile. Run: just open %s\n' "$profile" >&2
+      ;;
+    *)
+      printf 'Warning: Tailscale node is %s. Check with: just run %s "tailnet status"\n' "${tailnet_status%% *}" "$profile" >&2
+      ;;
+  esac
 fi
 if [ "$mode" = "qr" ] && [ -z "$tailnet_url" ]; then
-  printf 'A QR code is for other devices, which need T3CODE_ACCESS=tailscale. Change it with: just configure %s\n' "$profile" >&2
+  if [ "${T3CODE_ACCESS:-local}" != "tailscale" ]; then
+    printf 'A QR code is for other devices, which need T3CODE_ACCESS=tailscale. Change it with: just configure %s\n' "$profile" >&2
+  fi
   exit 1
 fi
 pair_base="$base_url"

@@ -57,6 +57,16 @@ if [ "${1:-}" = "--detail" ]; then
   fi
   if [ "${T3CODE_SERVE:-false}" = "true" ]; then
     printf 'T3 Code: http://localhost:%s  (pair with: just t3 %s)\n' "${T3CODE_PORT:-?}" "$profile"
+    if [ "${T3CODE_ACCESS:-local}" = "tailscale" ]; then
+      tailnet_state="not-running"
+      if [ "$docker_reachable" = "true" ] && [ "$state" = "running" ]; then
+        tailnet_state="$(docker exec "$CONTAINER_NAME" tailnet status 2>/dev/null || printf 'off')"
+      fi
+      case "${tailnet_state%% *}" in
+        running) printf 'Tailnet: %s  (pair another device with: just t3 %s qr)\n' "${tailnet_state#* }" "$profile" ;;
+        *) printf 'Tailnet: %s  (inside the shell, run: tailnet)\n' "${tailnet_state%% *}" ;;
+      esac
+    fi
   else
     printf 'T3 Code: not served\n'
   fi

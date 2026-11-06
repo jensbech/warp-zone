@@ -85,14 +85,14 @@ _sync profile:
 	  exit 1
 	fi
 	src="{{justfile_directory()}}"
-	cp "$src/template/Dockerfile" "$src/template/.dockerignore" "$src/template/catalog.json" "$src/template/install-tools.sh" "$src/template/bootstrap-home" "$src/template/warp-init" "$src/template/build.sh" "$src/template/open.sh" "$src/template/rebuild.sh" "$src/template/ssh.sh" "$dir/"
+	cp "$src/template/Dockerfile" "$src/template/.dockerignore" "$src/template/catalog.json" "$src/template/install-tools.sh" "$src/template/bootstrap-home" "$src/template/warp-init" "$src/template/tailnet" "$src/template/build.sh" "$src/template/open.sh" "$src/template/rebuild.sh" "$src/template/ssh.sh" "$dir/"
 	mkdir -p "$dir/templates" "$dir/lib"
 	cp "$src/template/templates/.bashrc" "$src/template/templates/.zshenv" "$src/template/templates/.zshrc" "$dir/templates/"
 	cp "$src/lib/helpers.sh" "$src/lib/backup.sh" "$src/lib/restore.sh" "$dir/lib/"
 	if [ ! -f "$dir/setup.sh" ]; then
 	  cp "$src/template/setup.sh" "$dir/setup.sh"
 	fi
-	chmod +x "$dir/build.sh" "$dir/open.sh" "$dir/rebuild.sh" "$dir/ssh.sh" "$dir/bootstrap-home" "$dir/warp-init" "$dir/lib/"*.sh
+	chmod +x "$dir/build.sh" "$dir/open.sh" "$dir/rebuild.sh" "$dir/ssh.sh" "$dir/bootstrap-home" "$dir/warp-init" "$dir/tailnet" "$dir/lib/"*.sh
 
 build profile=default_profile: (_sync profile)
 	~/warp/{{profile}}/build.sh

@@ -41,9 +41,20 @@ Always included: git, ripgrep, jq, fzf, bat, eza, tmux, zsh, Claude Code, Docker
 Answer yes to **"Serve T3 Code"** in the wizard (or later via `just configure`). The profile then runs [T3 Code](https://github.com/pingdotgg/t3code) and asks who can reach it:
 
 - **Local only:** `http://localhost:<T3CODE_PORT>` on this computer. Pair a browser with `just t3`.
-- **Tailscale:** the host's `tailscale serve` also publishes it to your own tailnet at `https://<this-host>.<your-tailnet>.ts.net:<T3CODE_PORT>`. It is never on the public internet. Run `just t3 <profile> qr` and scan the QR code with your phone or another device. No T3 account is needed.
+- **Tailscale:** the profile joins your tailnet as **its own machine**, named after the profile — nothing is tied to the host's Tailscale (the host does not even need it installed). T3 Code is published inside the container with `tailscale serve`, at `https://<profile>.<your-tailnet>.ts.net`. It is never on the public internet. The first time, run `tailnet` inside the shell: it prints a login link, waits for you to approve it, and publishes T3 Code. Then `just t3 <profile> qr` shows a QR code to pair your phone or another device. No T3 account is needed.
 
-Pairing links are one-time and valid for 15 minutes. State lives in `~/work/.t3code`, so it survives rebuilds. Switching between local and Tailscale takes effect on the next `just open`, and `destroy` removes the serve entry. Logs: `just run <profile> "sudo tail /var/log/t3code.log"`.
+The node logs in with the ACL tag from `TAILSCALE_TAGS` (default `tag:warp`), so your tailnet policy can fence it in. Tailscale ACLs are default-deny, so a tagged node reaches nothing unless a rule says so: add the tag under `tagOwners`, and grant *your* devices access to it — never the other way round:
+
+```json
+"tagOwners": { "tag:warp": ["autogroup:admin"] },
+"acls": [
+  { "action": "accept", "src": ["autogroup:member"], "dst": ["tag:warp:443"] }
+]
+```
+
+With no rule that has `tag:warp` as `src`, the profile cannot initiate connections to any other machine on your tailnet. (The internet is unaffected; this is only tailnet traffic.) Tagged nodes also have no key expiry, so the login does not need renewing.
+
+Pairing links are one-time and valid for 15 minutes. State lives in `~/work/.t3code` and `~/work/.tailscale`, so both the T3 Code data and the tailnet identity survive rebuilds. Switching between local and Tailscale recreates the container on the next `just open` (`~/work` is kept), and `destroy` logs the node out of your tailnet. Inside the shell: `tailnet status`, `tailnet serve`, `tailnet logout`. Logs: `just run <profile> "sudo tail /var/log/t3code.log /var/log/tailscaled.log"`.
 
 ## Recipes
 

@@ -165,9 +165,23 @@ for profile in $profiles; do
         exit 2
       fi
     fi
-    if [ "${T3CODE_SERVE:-false}" = "true" ] && [ "${T3CODE_ACCESS:-local}" = "tailscale" ] && ! tailscale_ready; then
-      printf "  ${yellow}warn${reset}  %-18s T3 Code is set to Tailscale, but Tailscale is not running on this host — start it, then: just open %s\n" "$profile" "$profile"
-      exit 2
+    if [ "$state" = "running" ] && [ "${T3CODE_SERVE:-false}" = "true" ] && [ "${T3CODE_ACCESS:-local}" = "tailscale" ]; then
+      tailnet_state="$(docker exec "$CONTAINER_NAME" tailnet status 2>/dev/null || printf 'off')"
+      case "${tailnet_state%% *}" in
+        running) ;;
+        needs-login | stopped)
+          printf "  ${yellow}warn${reset}  %-18s T3 Code is set to Tailscale, but the profile is not logged in — inside the shell, run: tailnet\n" "$profile"
+          exit 2
+          ;;
+        needs-approval)
+          printf "  ${yellow}warn${reset}  %-18s Tailscale node is waiting for approval in the admin console\n" "$profile"
+          exit 2
+          ;;
+        off)
+          printf "  ${yellow}warn${reset}  %-18s T3 Code is set to Tailscale, but tailscaled is not running in the profile — run: just rebuild %s\n" "$profile" "$profile"
+          exit 2
+          ;;
+      esac
     fi
     printf "  ${green}ok${reset}    %-18s\n" "$profile"
   )

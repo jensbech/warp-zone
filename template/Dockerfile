@@ -80,7 +80,8 @@ RUN if [ "$INCLUDE_JIRA" = "true" ]; then chmod +x /usr/local/bin/jira; else rm 
 COPY templates /opt/warp-zone/templates
 COPY bootstrap-home /usr/local/bin/bootstrap-home
 COPY warp-init /usr/local/bin/warp-init
-RUN chmod +x /usr/local/bin/bootstrap-home /usr/local/bin/warp-init
+COPY tailnet /usr/local/bin/tailnet
+RUN chmod +x /usr/local/bin/bootstrap-home /usr/local/bin/warp-init /usr/local/bin/tailnet
 
 ARG PROFILE_PROMPT=DEV
 ENV APP_USER=${APP_USER} \

@@ -6,7 +6,8 @@
 "microsoft": {"key":"https://packages.microsoft.com/keys/microsoft.asc","dearmor":true,"keyring":"microsoft","line":"deb [arch={arch} signed-by={keyring}] https://packages.microsoft.com/{id}/{version_id}/prod {codename} main"},
 "azure-cli": {"key":"https://packages.microsoft.com/keys/microsoft.asc","dearmor":true,"keyring":"microsoft","line":"deb [arch={arch} signed-by={keyring}] https://packages.microsoft.com/repos/azure-cli/ {codename} main"},
 "hashicorp": {"key":"https://apt.releases.hashicorp.com/gpg","dearmor":true,"line":"deb [arch={arch} signed-by={keyring}] https://apt.releases.hashicorp.com {codename} main"},
-"gcloud": {"key":"https://packages.cloud.google.com/apt/doc/apt-key.gpg","dearmor":true,"line":"deb [signed-by={keyring}] https://packages.cloud.google.com/apt cloud-sdk main"}
+"gcloud": {"key":"https://packages.cloud.google.com/apt/doc/apt-key.gpg","dearmor":true,"line":"deb [signed-by={keyring}] https://packages.cloud.google.com/apt cloud-sdk main"},
+"tailscale": {"key":"https://pkgs.tailscale.com/stable/{id}/{codename}.noarmor.gpg","dearmor":false,"line":"deb [signed-by={keyring}] https://pkgs.tailscale.com/stable/{id} {codename} main"}
 },
 "tools": [
 {"id":"node","label":"Node.js (corepack, pnpm, yarn)","group":"Languages & runtimes","keywords":"javascript js npm nodejs typescript","check":"node --version && npm --version","install":{"apt":"nodejs","repo":"nodesource","post":"command -v corepack >/dev/null 2>&1 || npm install -g corepack; corepack enable; corepack prepare \"pnpm@${PNPM_VERSION}\" --activate; corepack prepare \"yarn@${YARN_VERSION}\" --activate"}},
@@ -266,6 +267,7 @@
 {"id":"markdownlint","label":"markdownlint-cli","group":"Node.js tooling","keywords":"markdown lint","check":"markdownlint --version","requires":["node"],"install":{"npm":"markdownlint-cli"}},
 {"id":"codex","label":"OpenAI Codex CLI","group":"AI coding CLIs","keywords":"openai gpt agent","check":"codex --version","requires":["node"],"install":{"npm":"@openai/codex"}},
 {"id":"t3code","label":"T3 Code (agent web GUI)","group":"AI coding CLIs","keywords":"t3 theo gui web ui claude codex agents browser","check":"t3 --version","install":{"release":"https://github.com/pingdotgg/t3code/releases/download/v{version}/t3-{version}-linux-{arch}.tar.gz","gh":"pingdotgg/t3code","arch":{"amd64":"x64","arm64":"arm64"},"dir":"/opt/t3code","link":"t3"}},
+{"id":"tailscale","label":"Tailscale (this profile as its own tailnet node)","group":"Network & debugging","keywords":"tailnet vpn wireguard mesh serve funnel ts","check":"tailscale version","install":{"apt":"tailscale","repo":"tailscale"}},
 {"id":"gemini-cli","label":"Gemini CLI","group":"AI coding CLIs","keywords":"google gemini agent","check":"gemini --version","requires":["node"],"install":{"npm":"@google/gemini-cli"}},
 {"id":"opencode","label":"opencode","group":"AI coding CLIs","keywords":"agent terminal sst","check":"opencode --version","requires":["node"],"install":{"npm":"opencode-ai"}},
 {"id":"copilot-cli","label":"GitHub Copilot CLI","group":"AI coding CLIs","keywords":"github copilot agent","check":"copilot --version","requires":["node"],"install":{"npm":"@github/copilot"}},
