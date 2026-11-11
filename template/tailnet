@@ -3,28 +3,51 @@ set -uo pipefail
 
 # Tailscale for this profile, from inside the container. The profile is its own
 # node on your tailnet (named after the profile); nothing is tied to the host.
-#
-#   tailnet            log in if needed (prints the login link), then publish T3 Code
-#   tailnet status     one line: off | starting | needs-login <url> | needs-approval | stopped | running <url>
-#   tailnet url        the https://<profile>.<tailnet>.ts.net URL, or nothing
-#   tailnet serve      (re)publish T3 Code on the tailnet and print the URL
-#   tailnet logout     leave the tailnet (the node disappears from the admin console)
-#
 # Settings (node name, operator, ACL tags) come from /etc/warp-zone/tailnet.env,
 # written by warp-init from the profile's TAILSCALE_TAGS.
 
+usage() {
+  cat <<'EOF'
+tailnet                   log in if needed (prints the login link), then publish T3 Code
+tailnet status            one line: off | starting | needs-login <url> | needs-approval | needs-signature | stopped | running <url>
+tailnet url               the https://<profile>.<tailnet>.ts.net URL, or nothing
+tailnet serve             (re)publish T3 Code on the tailnet and print the URL
+tailnet sign-command      the command a Tailnet Lock signing node must run to admit this node
+tailnet exit-node         pick an exit node for this profile's internet traffic
+tailnet exit-node <node>  use that exit node (name or IP); "none" for direct internet
+tailnet untag             log in without the profile's ACL tag (as your own device)
+tailnet logout            leave the tailnet (the node disappears from the admin console)
+EOF
+}
+
 t3_port=3773
 up_log=/var/log/tailscale-up.log
+daemon_log=/var/log/tailscaled.log
 # shellcheck disable=SC1091
 [ -f /etc/warp-zone/tailnet.env ] && . /etc/warp-zone/tailnet.env
 node_name="${TAILNET_HOSTNAME:-$(hostname)}"
 operator="${TAILNET_OPERATOR:-${APP_USER:-}}"
-tags="${TAILNET_TAGS:-}"
+profile_tags="${TAILNET_TAGS:-}"
+state_dir="${TAILNET_STATE_DIR:-/home/${operator:-root}/work/.tailscale}"
+userspace="${TAILNET_USERSPACE:-false}"
+tags_override_file="$state_dir/tags-override"
+exit_node_file="$state_dir/exit-node"
+up_mark=0
+daemon_mark=0
 
 if [ "$(id -u)" -ne 0 ] && sudo -n true 2>/dev/null; then
-  ts() { sudo -n tailscale "$@"; }
+  as_root() { sudo -n "$@"; }
 else
-  ts() { tailscale "$@"; }
+  as_root() { "$@"; }
+fi
+ts() { as_root tailscale "$@"; }
+
+read_setting() { as_root cat "$1" 2>/dev/null | head -n 1; }
+write_setting() { printf '%s\n' "$2" | as_root tee "$1" >/dev/null 2>&1; }
+
+tags="$profile_tags"
+if [ -n "$profile_tags" ] && [ "$(read_setting "$tags_override_file")" = "$profile_tags" ]; then
+  tags=''
 fi
 
 have_daemon() {
@@ -36,7 +59,16 @@ json_field() { jq -r "$1 // empty" 2>/dev/null; }
 backend_state() { status_json | json_field '.BackendState'; }
 auth_url() { status_json | json_field '.AuthURL'; }
 dns_name() { status_json | json_field '.Self.DNSName' | sed 's/\.$//'; }
+self_tags() { status_json | jq -r '(.Self.Tags // []) | join(",")' 2>/dev/null; }
 https_enabled() { status_json | jq -e '(.CertDomains // []) | length > 0' >/dev/null 2>&1; }
+
+lock_json() { ts lock status --json 2>/dev/null; }
+locked_out() { lock_json | jq -e '.Enabled == true and .NodeKeySigned == false' >/dev/null 2>&1; }
+sign_command() {
+  lock_json \
+    | jq -r 'select(.NodeKey != null and .PublicKey != null) | "tailscale lock sign \(.NodeKey) \(.PublicKey)"' 2>/dev/null \
+    | sed 's/ nlpub:/ tlpub:/'
+}
 
 node_url() {
   local name
@@ -49,31 +81,79 @@ node_url() {
   fi
 }
 
+saved_exit_node() {
+  local saved
+  saved="$(read_setting "$exit_node_file")"
+  [ "$saved" = none ] && saved=''
+  printf '%s' "$saved"
+}
+
 up_args() {
+  local exit_node
   printf -- '--reset --hostname=%s' "$node_name"
   [ -n "$operator" ] && printf -- ' --operator=%s' "$operator"
   [ -n "$tags" ] && printf -- ' --advertise-tags=%s' "$tags"
+  exit_node="$(saved_exit_node)"
+  [ -n "$exit_node" ] && [ "$userspace" != true ] && printf -- ' --exit-node=%s --exit-node-allow-lan-access' "$exit_node"
   return 0
 }
+
+line_count() { [ -r "$1" ] && wc -l < "$1" | tr -d ' '; }
 
 # `tailscale up` blocks until the login finishes, so it runs detached and the
 # login link is read back from `tailscale status` instead.
 start_login() {
   # shellcheck disable=SC2046
-  ts up $(up_args) >>"$up_log" 2>&1 &
+  ts up $(up_args) "$@" >>"$up_log" 2>&1 &
   disown 2>/dev/null || true
 }
 
-login_refused_for_tags() {
-  [ -n "$tags" ] || return 1
-  ! pgrep -f 'tailscale up ' >/dev/null 2>&1 \
-    && tail -n 20 "$up_log" 2>/dev/null | grep -qiE 'tag|not permitted'
+restart_login() {
+  local old url i
+  old="$(auth_url)"
+  as_root pkill -f 'tailscale up ' >/dev/null 2>&1 || true
+  up_mark="$(line_count "$up_log")"
+  daemon_mark="$(line_count "$daemon_log")"
+  start_login --force-reauth
+  for i in $(seq 1 40); do
+    url="$(auth_url)"
+    [ -n "$url" ] && [ "$url" != "$old" ] && break
+    [ "$(backend_state)" = "Running" ] && break
+    sleep 0.5
+  done
 }
 
-tag_hint() {
-  login_refused_for_tags || return 0
-  printf '\nThe login was refused because of the ACL tag (%s). Your tailnet policy must list it under "tagOwners" with you as an owner, e.g.\n  "tagOwners": { "%s": ["autogroup:admin"] }\nLast lines of %s:\n' "$tags" "$tags" "$up_log"
-  tail -n 5 "$up_log" 2>/dev/null | sed 's/^/  /'
+login_refused_for_tags() {
+  local recent
+  [ -n "$tags" ] || return 1
+  recent="$(
+    tail -n "+$((${up_mark:-0} + 1))" "$up_log" 2>/dev/null
+    tail -n "+$((${daemon_mark:-0} + 1))" "$daemon_log" 2>/dev/null
+  )"
+  grep -qiE 'requested tags|invalid or not permitted' <<< "$recent"
+}
+
+tag_help() {
+  local first_tag="${tags%%,*}"
+  cat <<EOF
+
+Your tailnet refused the ACL tag ($tags): "requested tags are invalid or not permitted".
+A tag only works once your tailnet policy names it, with you as an owner. Either:
+
+  1. Add it at https://login.tailscale.com/admin/acls/file and log in again:
+       "tagOwners": { "$first_tag": ["autogroup:admin"] }
+     plus a rule that lets your devices reach the profile:
+       { "action": "accept", "src": ["autogroup:member"], "dst": ["$first_tag:443"] }
+
+  2. Join without the tag, as one of your own devices (it can then reach whatever you can).
+
+EOF
+}
+
+drop_tags() {
+  write_setting "$tags_override_file" "$profile_tags" \
+    || printf 'Warning: could not save the untagged choice in %s; the tag will be requested again after a restart.\n' "$state_dir" >&2
+  tags=''
 }
 
 print_status() {
@@ -82,8 +162,12 @@ print_status() {
   state="$(backend_state)"
   case "$state" in
     Running)
-      url="$(node_url)" || url=''
-      printf 'running %s\n' "$url"
+      if locked_out; then
+        printf 'needs-signature\n'
+      else
+        url="$(node_url)" || url=''
+        printf 'running %s\n' "$url"
+      fi
       ;;
     NeedsLogin)
       url="$(auth_url)"
@@ -117,8 +201,159 @@ wait_for_auth_url() {
   return 1
 }
 
+read_key() {
+  local key=''
+  if [ -t 0 ]; then
+    read -r -s -n 1 -t 1 key 2>/dev/null || true
+  else
+    sleep 1
+  fi
+  printf '%s' "$key"
+}
+
+wait_for_login() {
+  local i state key announced=false
+  for i in $(seq 1 900); do
+    state="$(backend_state)"
+    [ "$state" = "Running" ] && return 0
+    if [ "$state" = "NeedsMachineAuth" ] && [ "$announced" = false ]; then
+      printf 'The node is waiting for approval in the Tailscale admin console.\n'
+      announced=true
+    fi
+    login_refused_for_tags && return 2
+    key="$(read_key)"
+    case "$key" in
+      u | U) [ -n "$tags" ] && return 3 ;;
+      r | R) return 4 ;;
+    esac
+  done
+  return 1
+}
+
+ask_after_refusal() {
+  local answer=''
+  [ -t 0 ] || return 1
+  printf 'Press [r] once the policy is saved to get a new login link, [u] to join untagged, or any other key to stop: '
+  read -r -n 1 answer || true
+  printf '\n'
+  case "$answer" in
+    r | R) return 4 ;;
+    u | U) return 3 ;;
+  esac
+  return 1
+}
+
+wait_for_signature() {
+  local command i key
+  locked_out || return 0
+  command="$(sign_command)"
+  printf '\nYour tailnet uses Tailnet Lock, so "%s" is locked out until a signing node admits it.\nOn a device that holds a trusted Tailnet Lock key, run:\n\n  %s\n\n' "$node_name" "${command:-tailscale lock sign <node key from: tailscale lock status>}"
+  if [ -t 0 ]; then
+    printf 'Waiting for the signature (press [s] to stop waiting)...\n'
+  else
+    printf 'Waiting for the signature...\n'
+  fi
+  for i in $(seq 1 450); do
+    locked_out || { printf 'Signed.\n'; return 0; }
+    key="$(read_key)"
+    case "$key" in s | S) break ;; esac
+  done
+  locked_out || return 0
+  printf 'Still locked out. Run `tailnet` again once the node is signed (the command is also in: tailnet sign-command).\n' >&2
+  return 1
+}
+
+exit_node_options() {
+  status_json | jq -r '
+    [.Peer[]? | select(.ExitNodeOption == true and .Location == null)]
+    | sort_by(.HostName)[]
+    | [(.TailscaleIPs[0] // ""), ((.DNSName // .HostName) | split(".")[0]), (if .Online then "online" else "offline" end)]
+    | @tsv' 2>/dev/null
+}
+
+current_exit_node() {
+  status_json | jq -r '.ExitNodeStatus.TailscaleIPs[0] // empty' 2>/dev/null | cut -d/ -f1
+}
+
+set_exit_node() {
+  local target="$1"
+  if [ -z "$target" ] || [ "$target" = none ] || [ "$target" = off ]; then
+    ts set --exit-node= >/dev/null 2>&1 || { printf 'Could not switch the exit node off.\n' >&2; return 1; }
+    write_setting "$exit_node_file" none
+    printf 'No exit node: this profile reaches the internet directly.\n'
+    return 0
+  fi
+  if [ "$userspace" = true ]; then
+    printf 'This container has no /dev/net/tun, so Tailscale runs in userspace mode and cannot route the profile through an exit node.\n' >&2
+    return 1
+  fi
+  if ! ts set --exit-node="$target" --exit-node-allow-lan-access=true; then
+    printf 'Could not use "%s" as exit node. See the choices with: tailnet exit-node\n' "$target" >&2
+    return 1
+  fi
+  write_setting "$exit_node_file" "$target"
+  printf 'Internet traffic from this profile now leaves through exit node %s. Change it with: tailnet exit-node\n' "$target"
+}
+
+choose_exit_node() {
+  local options current count=0 ip name online answer line marker
+  local -a ips=() names=()
+  if [ "$(backend_state)" != "Running" ]; then
+    printf 'Not on the tailnet yet - run: tailnet\n' >&2
+    return 1
+  fi
+  if [ "$userspace" = true ]; then
+    printf 'Exit nodes are unavailable: this container has no /dev/net/tun, so Tailscale runs in userspace mode.\n'
+    return 0
+  fi
+  options="$(exit_node_options)"
+  if [ -z "$options" ]; then
+    printf '\nNo exit nodes are visible to this node, so it keeps reaching the internet directly.\n'
+    if [ -n "$(self_tags)" ]; then
+      printf 'A tagged node only sees exit nodes when the tailnet policy allows it, e.g.\n  { "action": "accept", "src": ["%s"], "dst": ["autogroup:internet:*"] }\n' "$(self_tags | cut -d, -f1)"
+    fi
+    printf 'Pick one later with: tailnet exit-node\n'
+    return 0
+  fi
+  current="$(current_exit_node)"
+  marker=''
+  [ -z "$current" ] && marker='  (current)'
+  printf '\nRoute this profile'\''s internet traffic through an exit node?\n\n  0) None - direct internet%s\n' "$marker"
+  while IFS=$'\t' read -r ip name online; do
+    [ -n "$ip" ] || continue
+    count=$((count + 1))
+    ips+=("$ip")
+    names+=("$name")
+    marker=''
+    [ "$ip" = "$current" ] && marker='  (current)'
+    printf '  %d) %s  %s  %s%s\n' "$count" "$name" "$ip" "$online" "$marker"
+  done <<< "$options"
+  printf '\nChoice [Enter keeps the current setting]: '
+  read -r answer || answer=''
+  case "$answer" in
+    '')
+      [ -n "$(read_setting "$exit_node_file")" ] || write_setting "$exit_node_file" "${current:-none}"
+      return 0
+      ;;
+    0 | none) set_exit_node none ;;
+    *[!0-9]*)
+      printf 'Not a number: %s\n' "$answer" >&2
+      return 1
+      ;;
+    *)
+      if [ "$answer" -ge 1 ] && [ "$answer" -le "$count" ]; then
+        line=$((answer - 1))
+        set_exit_node "${ips[$line]}"
+      else
+        printf 'No such choice: %s\n' "$answer" >&2
+        return 1
+      fi
+      ;;
+  esac
+}
+
 login_interactive() {
-  local state url i
+  local state url rc connected_tags
   if ! command -v tailscale >/dev/null 2>&1; then
     printf 'Tailscale is not installed in this profile. On the host: just configure <profile> (T3 Code -> Tailscale), then: just rebuild <profile>\n' >&2
     return 1
@@ -131,39 +366,65 @@ login_interactive() {
   if [ "$state" = "Running" ]; then
     printf 'Already on the tailnet as %s.\n' "$(dns_name)"
   else
-    url="$(auth_url)"
-    if [ -z "$url" ]; then
+    if [ -z "$(auth_url)" ]; then
       start_login
-      url="$(wait_for_auth_url)" || true
+      wait_for_auth_url >/dev/null || true
     fi
-    if [ "$(backend_state)" != "Running" ]; then
+    while [ "$(backend_state)" != "Running" ]; do
+      url="$(auth_url)"
       if [ -n "$url" ]; then
-        printf '\nLog in to Tailscale to put "%s" on your tailnet:\n\n  %s\n\n' "$node_name" "$url"
+        printf '\nLog in to Tailscale to put "%s" on your tailnet%s:\n\n  %s\n\n' "$node_name" "${tags:+ with ACL tag $tags}" "$url"
         printf 'Waiting for the login to complete (Ctrl-C to stop waiting)...\n'
-      else
-        printf 'Waiting for tailscaled to produce a login link (see /var/log/tailscale-up.log)...\n'
-      fi
-      for i in $(seq 1 600); do
-        state="$(backend_state)"
-        [ "$state" = "Running" ] && break
-        if [ "$state" = "NeedsMachineAuth" ] && [ "$i" -eq 1 ]; then
-          printf 'The node is waiting for approval in the Tailscale admin console.\n'
+        if [ -t 0 ]; then
+          if [ -n "$tags" ]; then
+            printf 'If the browser says "requested tags ... are invalid or not permitted": press [u] to join untagged, or fix the policy and press [r] for a new link.\n'
+          else
+            printf 'Press [r] if you need a new login link.\n'
+          fi
         fi
-        login_refused_for_tags && break
-        sleep 1
-      done
-    fi
+      else
+        printf 'Waiting for tailscaled to produce a login link (see %s)...\n' "$up_log"
+      fi
+      wait_for_login
+      rc=$?
+      if [ "$rc" -eq 2 ]; then
+        tag_help
+        ask_after_refusal
+        rc=$?
+      fi
+      case "$rc" in
+        0) break ;;
+        3)
+          drop_tags
+          printf 'Joining without an ACL tag...\n'
+          restart_login
+          ;;
+        4)
+          printf 'Requesting a new login link...\n'
+          restart_login
+          ;;
+        *) break ;;
+      esac
+    done
   fi
   if [ "$(backend_state)" != "Running" ]; then
-    printf 'Still not connected (state: %s). Run `tailnet` again once you have logged in.\n' "$(backend_state)" >&2
-    tag_hint >&2
+    printf 'Still not connected (state: %s). Run `tailnet` again to log in' "$(backend_state)" >&2
+    if [ -n "$tags" ]; then
+      printf ', or `tailnet untag` to join without the ACL tag (%s)' "$tags" >&2
+    fi
+    printf '.\n' >&2
     return 1
   fi
+  wait_for_signature || return 1
+  connected_tags="$(self_tags)"
   if url="$(ensure_serve)"; then
-    printf 'Connected as %s%s. T3 Code is published on your tailnet at:\n\n  %s\n\nPair another device: just t3 <profile> qr   (on the host)\n' "$(dns_name)" "${tags:+ ($tags)}" "$url"
+    printf 'Connected as %s%s. T3 Code is published on your tailnet at:\n\n  %s\n\nPair another device: just t3 <profile> qr   (on the host)\n' "$(dns_name)" "${connected_tags:+ ($connected_tags)}" "$url"
   else
     printf 'Connected as %s, but publishing T3 Code failed. Try again with: tailnet serve\n' "$(dns_name)" >&2
     return 1
+  fi
+  if [ -t 0 ] && [ -z "$(read_setting "$exit_node_file")" ]; then
+    choose_exit_node || true
   fi
 }
 
@@ -179,14 +440,38 @@ case "${1:-login}" in
     url="$(ensure_serve)" || { printf 'Not on the tailnet yet - run: tailnet\n' >&2; exit 1; }
     printf '%s\n' "$url"
     ;;
+  sign-command)
+    locked_out || exit 0
+    sign_command
+    ;;
+  exit-node)
+    have_daemon || { printf 'tailscaled is not running in this profile.\n' >&2; exit 1; }
+    if [ "$#" -ge 2 ]; then
+      set_exit_node "$2"
+    else
+      choose_exit_node
+    fi
+    ;;
+  untag)
+    have_daemon || { printf 'tailscaled is not running in this profile.\n' >&2; exit 1; }
+    if [ -z "$tags" ]; then
+      printf 'This profile already logs in without an ACL tag.\n'
+    elif [ "$(backend_state)" = "Running" ]; then
+      printf 'This node is logged in with its tag. To rejoin untagged, run `tailnet logout` and then `tailnet untag`.\n'
+      exit 0
+    else
+      drop_tags
+      restart_login
+    fi
+    login_interactive
+    ;;
   logout | down)
     have_daemon || exit 0
     ts serve reset >/dev/null 2>&1 || true
+    as_root rm -f "$tags_override_file" "$exit_node_file" 2>/dev/null || true
     ts logout
     ;;
-  -h | --help | help)
-    sed -n '4,11p' "$0" | sed 's/^# \{0,1\}//'
-    ;;
+  -h | --help | help) usage ;;
   *)
     printf 'Unknown command: %s (try: tailnet help)\n' "$1" >&2
     exit 1

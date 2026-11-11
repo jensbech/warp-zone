@@ -52,9 +52,15 @@ The node logs in with the ACL tag from `TAILSCALE_TAGS` (default `tag:warp`), so
 ]
 ```
 
+The wizard asks whether to join fenced in with a tag or untagged (as one of your own devices, no policy edit needed). If the tag is missing from `tagOwners`, Tailscale ends the login with *"requested tags [tag:warp] are invalid or not permitted"*; `tailnet` then lets you press `r` for a new link once the policy is saved, or `u` to join untagged (also: `tailnet untag`).
+
 With no rule that has `tag:warp` as `src`, the profile cannot initiate connections to any other machine on your tailnet. (The internet is unaffected; this is only tailnet traffic.) Tagged nodes also have no key expiry, so the login does not need renewing.
 
-Pairing links are one-time and valid for 15 minutes. State lives in `~/work/.t3code` and `~/work/.tailscale`, so both the T3 Code data and the tailnet identity survive rebuilds. Switching between local and Tailscale recreates the container on the next `just open` (`~/work` is kept), and `destroy` logs the node out of your tailnet. Inside the shell: `tailnet status`, `tailnet serve`, `tailnet logout`. Logs: `just run <profile> "sudo tail /var/log/t3code.log /var/log/tailscaled.log"`.
+**Tailnet Lock:** if your tailnet requires node signatures, the new node is locked out until a signing node admits it. `tailnet` detects this, prints the exact `tailscale lock sign nodekey:… tlpub:…` command to run on a signing device, and waits for the signature before publishing T3 Code (`tailnet sign-command` prints it again; `tailnet status` reports `needs-signature`).
+
+**Exit nodes:** once the node is connected, `tailnet` ends by asking whether the profile's internet traffic should leave through one of your exit nodes. The choice is kept in `~/work/.tailscale` and reapplied on every start; change it with `tailnet exit-node` (selector) or `tailnet exit-node <name|ip|none>`. Local network access stays on, so the published ports keep working. A tagged node only sees exit nodes if the policy allows it: `{ "action": "accept", "src": ["tag:warp"], "dst": ["autogroup:internet:*"] }`.
+
+Pairing links are one-time and valid for 15 minutes. State lives in `~/work/.t3code` and `~/work/.tailscale`, so both the T3 Code data and the tailnet identity survive rebuilds. Switching between local and Tailscale recreates the container on the next `just open` (`~/work` is kept), and `destroy` logs the node out of your tailnet. Inside the shell: `tailnet status`, `tailnet serve`, `tailnet exit-node`, `tailnet logout` (`tailnet help` lists them all). Logs: `just run <profile> "sudo tail /var/log/t3code.log /var/log/tailscaled.log"`.
 
 ## Recipes
 

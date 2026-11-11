@@ -254,6 +254,10 @@ if [ "$t3code_serve" = "true" ]; then
       needs-approval)
         printf 'Tailnet:   waiting for approval in the Tailscale admin console.\n'
         ;;
+      needs-signature)
+        printf 'Tailnet:   locked out by Tailnet Lock until a signing node admits it. On a signing device, run:\n'
+        printf '           %s\n' "$(docker exec "$container_name" tailnet sign-command 2>/dev/null || printf 'tailnet sign-command   (inside the shell)')"
+        ;;
       stopped)
         printf 'Tailnet:   stopped. Inside the shell, run: tailnet\n'
         ;;

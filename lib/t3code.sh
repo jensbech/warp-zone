@@ -41,6 +41,9 @@ if [ "${T3CODE_ACCESS:-local}" = "tailscale" ]; then
       login_url="${tailnet_status#* }"
       [ -n "$login_url" ] && [ "$login_url" != "-" ] && printf '         or log in now: %s\n' "$login_url" >&2
       ;;
+    needs-signature)
+      printf 'Warning: this profile is locked out by Tailnet Lock. On a signing device, run:\n         %s\n' "$(docker exec "$CONTAINER_NAME" tailnet sign-command 2>/dev/null || true)" >&2
+      ;;
     off)
       printf 'Warning: Tailscale is not running in this profile. Run: just open %s\n' "$profile" >&2
       ;;

@@ -444,7 +444,7 @@ function summarize(config) {
   console.log(`  ${label('Tools')}${describeTools(config.selectedTools, config.extraApt)}`);
   console.log(`  ${label('Dotfiles')}${describeDotfiles(config)}`);
   console.log(`  ${label('SSH')}${config.sshEnabled ? `ssh ${config.sshHostname || config.profileName}  ${chalk.dim(`(127.0.0.1:${config.sshPort}, key: ${config.sshPubkey})`)}` : chalk.dim(`disabled (port ${config.sshPort} reserved)`)}`);
-  const t3codeReach = config.t3codeAccess === 'tailscale' ? `localhost:${config.t3codePort} + https://${config.profileName}.<your-tailnet>.ts.net  ${chalk.dim('(own tailnet node tagged ' + (config.tailscaleTags || 'untagged') + '; log in once with `tailnet` inside)')}` : `localhost:${config.t3codePort} only`;
+  const t3codeReach = config.t3codeAccess === 'tailscale' ? `localhost:${config.t3codePort} + https://${config.profileName}.<your-tailnet>.ts.net  ${chalk.dim('(own tailnet node, ' + (config.tailscaleTags ? 'tagged ' + config.tailscaleTags : 'untagged') + '; log in once with `tailnet` inside)')}` : `localhost:${config.t3codePort} only`;
   console.log(`  ${label('T3 Code')}${config.t3codeServe ? `${t3codeReach}  ${chalk.dim('(pair with: just t3 ' + config.profileName + (config.t3codeAccess === 'tailscale' ? ' qr' : '') + ')')}` : chalk.dim('not served')}`);
   console.log(`  ${label('Docker')}${chalk.dim('engine inside the profile (docker-in-docker), state on volume ' + config.dockerVolume)}`);
   if (config.recipeExtras?.length) {
@@ -527,10 +527,29 @@ async function promptForProfile(defaults, { startedFrom = '', configuring = fals
   }
   let tailscaleTags = defaults.tailscaleTags ?? DEFAULT_TAILSCALE_TAGS;
   if (t3codeAccess === 'tailscale') {
-    tailscaleTags = (await input({
-      message: 'Tailscale ACL tag(s) for this node (comma-separated; must exist under "tagOwners" in your tailnet policy)',
-      default: tailscaleTags
-    })).trim();
+    const fenced = await select({
+      message: 'How should the profile join your tailnet?',
+      choices: [
+        {
+          name: 'Fenced in with an ACL tag (needs a one-time edit of your tailnet policy)',
+          value: true,
+          description: 'The node can reach nothing on your tailnet unless a rule says so. The tag must be listed under "tagOwners" in your policy first, or Tailscale refuses the login.'
+        },
+        {
+          name: 'Untagged, as one of your own devices (works right away)',
+          value: false,
+          description: 'No policy edit needed, but the profile can reach whatever you can reach on your tailnet.'
+        }
+      ],
+      default: tailscaleTags !== ''
+    });
+    tailscaleTags = fenced
+      ? (await input({
+          message: 'Tailscale ACL tag(s) for this node (comma-separated)',
+          default: tailscaleTags || DEFAULT_TAILSCALE_TAGS,
+          validate: (value) => value.split(',').every((tag) => /^tag:[A-Za-z][A-Za-z0-9-]*$/.test(tag.trim())) || 'Tags look like tag:warp (letters, digits and dashes).'
+        })).split(',').map((tag) => tag.trim()).join(',')
+      : '';
   }
   const selectedTools = withT3code(picked.selected.slice().sort((a, b) => catalogOrder.get(a) - catalogOrder.get(b)), t3codeServe, t3codeAccess);
 
@@ -975,6 +994,13 @@ async function main() {
     console.log(chalk.dim(`Then open T3 Code in your browser: ${cmd} t3 ${config.profileName}`));
     if (config.t3codeAccess === 'tailscale') {
       console.log(chalk.dim(`Inside the shell, run \`tailnet\` once to log the profile in to your tailnet; then: ${cmd} t3 ${config.profileName} qr`));
+      console.log(chalk.dim('`tailnet` also waits for a Tailnet Lock signature if your tailnet needs one, and lets you pick an exit node at the end.'));
+      if (config.tailscaleTags) {
+        const firstTag = config.tailscaleTags.split(',')[0];
+        console.log(chalk.yellow(`\nBefore logging in, your tailnet policy (https://login.tailscale.com/admin/acls/file) must own ${config.tailscaleTags}:`));
+        console.log(`  "tagOwners": { "${firstTag}": ["autogroup:admin"] }`);
+        console.log(chalk.dim('Otherwise the login ends in "requested tags are invalid or not permitted" — `tailnet` then offers to join untagged instead.'));
+      }
     }
   }
   if (savedRecipe) {

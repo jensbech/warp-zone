@@ -52,11 +52,13 @@ if [ "${T3CODE_ACCESS:-local}" = tailscale ] && command -v tailscaled >/dev/null
   install -d -m 0700 "$ts_state"
   # `tailnet` runs from login shells that do not see the container's env, so it
   # reads the node settings from here.
-  printf 'TAILNET_HOSTNAME=%q\nTAILNET_OPERATOR=%q\nTAILNET_TAGS=%q\n' "$(hostname)" "$APP_USER" "${TAILSCALE_TAGS:-}" > /etc/warp-zone/tailnet.env
   ts_args=(--state="$ts_state/tailscaled.state" --socket=/var/run/tailscale/tailscaled.sock)
+  ts_userspace=false
   if [ ! -c /dev/net/tun ]; then
     ts_args+=(--tun=userspace-networking)
+    ts_userspace=true
   fi
+  printf 'TAILNET_HOSTNAME=%q\nTAILNET_OPERATOR=%q\nTAILNET_TAGS=%q\nTAILNET_STATE_DIR=%q\nTAILNET_USERSPACE=%q\n' "$(hostname)" "$APP_USER" "${TAILSCALE_TAGS:-}" "$ts_state" "$ts_userspace" > /etc/warp-zone/tailnet.env
   tailscaled "${ts_args[@]}" >/var/log/tailscaled.log 2>&1 &
   ts_ready=false
   for _ in $(seq 1 40); do

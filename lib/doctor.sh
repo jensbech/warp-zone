@@ -177,6 +177,10 @@ for profile in $profiles; do
           printf "  ${yellow}warn${reset}  %-18s Tailscale node is waiting for approval in the admin console\n" "$profile"
           exit 2
           ;;
+        needs-signature)
+          printf "  ${yellow}warn${reset}  %-18s Tailscale node is locked out by Tailnet Lock — sign it from a signing device: just run %s \"tailnet sign-command\"\n" "$profile" "$profile"
+          exit 2
+          ;;
         off)
           printf "  ${yellow}warn${reset}  %-18s T3 Code is set to Tailscale, but tailscaled is not running in the profile — run: just rebuild %s\n" "$profile" "$profile"
           exit 2
