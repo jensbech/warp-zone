@@ -409,6 +409,24 @@ async function copyTemplateProfile(profileDir) {
 
 const LABEL_WIDTH = 10;
 
+function tailnetPolicyLines(tags) {
+  const list = tags.split(',').filter(Boolean);
+  const owners = list.map((tag) => `"${tag}": ["autogroup:admin"]`).join(', ');
+  const dst = list.map((tag) => `"${tag}:443"`).join(', ');
+  return [
+    `"tagOwners": { ${owners} },`,
+    '"acls": [',
+    `  { "action": "accept", "src": ["autogroup:member"], "dst": [${dst}] }`,
+    ']'
+  ];
+}
+
+function printTailnetPolicy(tags) {
+  console.log(chalk.yellow(`\n  ${tags} needs two entries in your tailnet policy (https://login.tailscale.com/admin/acls/file):`));
+  for (const line of tailnetPolicyLines(tags)) console.log(`    ${line}`);
+  console.log(chalk.dim('  Without "tagOwners" Tailscale refuses the login; without the "acls" rule none of your devices can reach the profile, so pairing fails.\n'));
+}
+
 function describeTools(selectedTools, extraApt = []) {
   if (selectedTools.length === 0 && extraApt.length === 0) {
     return chalk.dim('none — minimal base');
@@ -526,6 +544,7 @@ async function promptForProfile(defaults, { startedFrom = '', configuring = fals
     });
   }
   let tailscaleTags = defaults.tailscaleTags ?? DEFAULT_TAILSCALE_TAGS;
+  let tailscalePolicyPending = false;
   if (t3codeAccess === 'tailscale') {
     const fenced = await select({
       message: 'How should the profile join your tailnet?',
@@ -550,6 +569,21 @@ async function promptForProfile(defaults, { startedFrom = '', configuring = fals
           validate: (value) => value.split(',').every((tag) => /^tag:[A-Za-z][A-Za-z0-9-]*$/.test(tag.trim())) || 'Tags look like tag:warp (letters, digits and dashes).'
         })).split(',').map((tag) => tag.trim()).join(',')
       : '';
+    const alreadySetUp = configuring && defaults.t3codeAccess === 'tailscale' && defaults.tailscaleTags === tailscaleTags;
+    if (tailscaleTags && !alreadySetUp) {
+      printTailnetPolicy(tailscaleTags);
+      const policy = await select({
+        message: 'Are both entries in your tailnet policy?',
+        choices: [
+          { name: 'Yes, they are there', value: 'done' },
+          { name: 'Not yet - remind me when I log the profile in', value: 'later' },
+          { name: 'Skip the tag and join untagged instead', value: 'untagged' }
+        ],
+        default: 'later'
+      });
+      if (policy === 'untagged') tailscaleTags = '';
+      tailscalePolicyPending = policy === 'later';
+    }
   }
   const selectedTools = withT3code(picked.selected.slice().sort((a, b) => catalogOrder.get(a) - catalogOrder.get(b)), t3codeServe, t3codeAccess);
 
@@ -631,6 +665,7 @@ async function promptForProfile(defaults, { startedFrom = '', configuring = fals
     t3codePort,
     t3codeAccess,
     tailscaleTags,
+    tailscalePolicyPending,
     selectedTools,
     extraApt,
     startedFrom,
@@ -995,11 +1030,9 @@ async function main() {
     if (config.t3codeAccess === 'tailscale') {
       console.log(chalk.dim(`Inside the shell, run \`tailnet\` once to log the profile in to your tailnet; then: ${cmd} t3 ${config.profileName} qr`));
       console.log(chalk.dim('`tailnet` also waits for a Tailnet Lock signature if your tailnet needs one, and lets you pick an exit node at the end.'));
-      if (config.tailscaleTags) {
-        const firstTag = config.tailscaleTags.split(',')[0];
-        console.log(chalk.yellow(`\nBefore logging in, your tailnet policy (https://login.tailscale.com/admin/acls/file) must own ${config.tailscaleTags}:`));
-        console.log(`  "tagOwners": { "${firstTag}": ["autogroup:admin"] }`);
-        console.log(chalk.dim('Otherwise the login ends in "requested tags are invalid or not permitted" — `tailnet` then offers to join untagged instead.'));
+      if (config.tailscaleTags && config.tailscalePolicyPending !== false) {
+        console.log(chalk.yellow('\nBefore logging in:'));
+        printTailnetPolicy(config.tailscaleTags);
       }
     }
   }

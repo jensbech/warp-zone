@@ -134,6 +134,23 @@ login_refused_for_tags() {
   grep -qiE 'requested tags|invalid or not permitted' <<< "$recent"
 }
 
+policy_lines() {
+  local owners='' dst='' tag
+  local IFS=,
+  for tag in $1; do
+    owners="${owners:+$owners, }\"$tag\": [\"autogroup:admin\"]"
+    dst="${dst:+$dst, }\"$tag:443\""
+  done
+  printf '    "tagOwners": { %s },\n    "acls": [\n      { "action": "accept", "src": ["autogroup:member"], "dst": [%s] }\n    ]\n' "$owners" "$dst"
+}
+
+policy_reminder() {
+  [ -n "$tags" ] || return 0
+  printf '\nThis node joins with ACL tag %s, which needs two entries in your tailnet policy\n(https://login.tailscale.com/admin/acls/file) - check them before you log in:\n\n' "$tags"
+  policy_lines "$tags"
+  printf '\n  Without "tagOwners" the login is refused; without the "acls" rule no device can reach this node.\n'
+}
+
 tag_help() {
   local first_tag="${tags%%,*}"
   cat <<EOF
@@ -191,6 +208,23 @@ ensure_serve() {
   node_url
 }
 
+reach_hint() {
+  local own_tags first_tag
+  own_tags="$(self_tags)"
+  [ -n "$own_tags" ] || return 0
+  status_json | jq -e '(.Peer // {}) | length == 0' >/dev/null 2>&1 || return 0
+  first_tag="${own_tags%%,*}"
+  cat >&2 <<EOF
+
+Warning: this node is tagged ($own_tags) and sees no other device on your tailnet, so nothing can reach it yet
+and pairing will fail. Tagged nodes are cut off until the tailnet policy allows access. Add this rule under
+"acls" at https://login.tailscale.com/admin/acls/file (it takes effect within seconds, no new login needed):
+
+  { "action": "accept", "src": ["autogroup:member"], "dst": ["$first_tag:443"] }
+
+EOF
+}
+
 pair_qr() {
   local base t3_home pairing pair_url
   if ! command -v t3 >/dev/null 2>&1; then
@@ -212,10 +246,11 @@ pair_qr() {
   printf 'Tailnet:  %s   (any device on your tailnet)\nPair:     %s   (one-time link, valid 15 minutes)\n\n' "$base" "$pair_url"
   if command -v qrencode >/dev/null 2>&1; then
     qrencode -t ANSIUTF8 -m 2 "$pair_url"
-    printf 'Scan it with the device you want to pair.\n'
+    printf 'Scan it with the device you want to pair (it must be on your tailnet).\n'
   else
     printf 'No QR renderer in this image (qrencode). Open the link above, or on the host: just rebuild <profile>\n' >&2
   fi
+  reach_hint
 }
 
 wait_for_auth_url() {
@@ -402,6 +437,7 @@ login_interactive() {
       start_login
       wait_for_auth_url >/dev/null || true
     fi
+    policy_reminder
     while [ "$(backend_state)" != "Running" ]; do
       url="$(auth_url)"
       if [ -n "$url" ]; then
@@ -455,6 +491,7 @@ login_interactive() {
     printf 'Connected as %s, but publishing T3 Code failed. Try again with: tailnet serve\n' "$(dns_name)" >&2
     return 1
   fi
+  reach_hint
   if [ -t 0 ] && [ -z "$(read_setting "$exit_node_file")" ]; then
     choose_exit_node || true
   fi
