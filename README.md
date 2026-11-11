@@ -60,7 +60,7 @@ With no rule that has `tag:warp` as `src`, the profile cannot initiate connectio
 
 **Exit nodes:** once the node is connected, `tailnet` ends by asking whether the profile's internet traffic should leave through one of your exit nodes. The choice is kept in `~/work/.tailscale` and reapplied on every start; change it with `tailnet exit-node` (selector) or `tailnet exit-node <name|ip|none>`. Local network access stays on, so the published ports keep working. A tagged node only sees exit nodes if the policy allows it: `{ "action": "accept", "src": ["tag:warp"], "dst": ["autogroup:internet:*"] }`.
 
-Pairing links are one-time and valid for 15 minutes. State lives in `~/work/.t3code` and `~/work/.tailscale`, so both the T3 Code data and the tailnet identity survive rebuilds. Switching between local and Tailscale recreates the container on the next `just open` (`~/work` is kept), and `destroy` logs the node out of your tailnet. Inside the shell: `tailnet status`, `tailnet serve`, `tailnet exit-node`, `tailnet logout` (`tailnet help` lists them all). Logs: `just run <profile> "sudo tail /var/log/t3code.log /var/log/tailscaled.log"`.
+Pairing links are one-time and valid for 15 minutes. State lives in `~/work/.t3code` and `~/work/.tailscale`, so both the T3 Code data and the tailnet identity survive rebuilds. Switching between local and Tailscale recreates the container on the next `just open` (`~/work` is kept), and `destroy` logs the node out of your tailnet. Inside the shell: `tailnet qr` (the same pairing QR code, without leaving the box), `tailnet status`, `tailnet serve`, `tailnet exit-node`, `tailnet logout` (`tailnet help` lists them all). Logs: `just run <profile> "sudo tail /var/log/t3code.log /var/log/tailscaled.log"`.
 
 ## Recipes
 

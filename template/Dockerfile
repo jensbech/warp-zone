@@ -41,7 +41,7 @@ RUN . /etc/os-release \
  && if [ -n "$DOCKER_COMPOSE_VERSION" ]; then docker_pkgs="$docker_pkgs docker-compose-plugin=${DOCKER_COMPOSE_VERSION}-${apt_sfx}"; else docker_pkgs="$docker_pkgs docker-compose-plugin"; fi \
  && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends \
-      bash bat build-essential bzip2 file fzf git iptables jq less lsb-release openssh-client procps ripgrep sudo tmux unzip vim wget xz-utils zip zsh zsh-autosuggestions zsh-syntax-highlighting \
+      bash bat build-essential bzip2 file fzf git iptables jq less lsb-release openssh-client procps qrencode ripgrep sudo tmux unzip vim wget xz-utils zip zsh zsh-autosuggestions zsh-syntax-highlighting \
       $docker_pkgs \
  && if apt-cache show eza >/dev/null 2>&1; then apt-get install -y --no-install-recommends eza; fi \
  && rm -rf /var/lib/apt/lists/*

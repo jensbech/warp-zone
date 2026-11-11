@@ -12,6 +12,7 @@ tailnet                   log in if needed (prints the login link), then publish
 tailnet status            one line: off | starting | needs-login <url> | needs-approval | needs-signature | stopped | running <url>
 tailnet url               the https://<profile>.<tailnet>.ts.net URL, or nothing
 tailnet serve             (re)publish T3 Code on the tailnet and print the URL
+tailnet qr                a one-time T3 Code pairing link for another device, as a QR code
 tailnet sign-command      the command a Tailnet Lock signing node must run to admit this node
 tailnet exit-node         pick an exit node for this profile's internet traffic
 tailnet exit-node <node>  use that exit node (name or IP); "none" for direct internet
@@ -190,6 +191,33 @@ ensure_serve() {
   node_url
 }
 
+pair_qr() {
+  local base t3_home pairing pair_url
+  if ! command -v t3 >/dev/null 2>&1; then
+    printf 'T3 Code is not installed in this profile.\n' >&2
+    return 1
+  fi
+  base="$(ensure_serve)" || { printf 'Not on the tailnet yet - run: tailnet\n' >&2; return 1; }
+  t3_home="$(dirname "$state_dir")/.t3code"
+  if [ -n "$operator" ] && [ "$(id -un)" != "$operator" ]; then
+    pairing="$(as_root su - "$operator" -c "t3 auth pairing create --base-dir '$t3_home' --base-url '$base' --ttl 15m --label '$node_name' --json" 2>&1)"
+  else
+    pairing="$(t3 auth pairing create --base-dir "$t3_home" --base-url "$base" --ttl 15m --label "$node_name" --json 2>&1)"
+  fi
+  pair_url="$(printf '%s\n' "$pairing" | sed -n 's/.*"pairUrl": *"\([^"]*\)".*/\1/p' | head -n 1)"
+  if [ -z "$pair_url" ]; then
+    printf 'Could not mint a pairing link:\n%s\n' "$pairing" >&2
+    return 1
+  fi
+  printf 'Tailnet:  %s   (any device on your tailnet)\nPair:     %s   (one-time link, valid 15 minutes)\n\n' "$base" "$pair_url"
+  if command -v qrencode >/dev/null 2>&1; then
+    qrencode -t ANSIUTF8 -m 2 "$pair_url"
+    printf 'Scan it with the device you want to pair.\n'
+  else
+    printf 'No QR renderer in this image (qrencode). Open the link above, or on the host: just rebuild <profile>\n' >&2
+  fi
+}
+
 wait_for_auth_url() {
   local i url
   for i in $(seq 1 30); do
@@ -297,7 +325,7 @@ set_exit_node() {
 
 choose_exit_node() {
   local options current count=0 ip name online answer line marker
-  local -a ips=() names=()
+  local -a ips=() states=()
   if [ "$(backend_state)" != "Running" ]; then
     printf 'Not on the tailnet yet - run: tailnet\n' >&2
     return 1
@@ -323,7 +351,7 @@ choose_exit_node() {
     [ -n "$ip" ] || continue
     count=$((count + 1))
     ips+=("$ip")
-    names+=("$name")
+    states+=("$online")
     marker=''
     [ "$ip" = "$current" ] && marker='  (current)'
     printf '  %d) %s  %s  %s%s\n' "$count" "$name" "$ip" "$online" "$marker"
@@ -343,6 +371,10 @@ choose_exit_node() {
     *)
       if [ "$answer" -ge 1 ] && [ "$answer" -le "$count" ]; then
         line=$((answer - 1))
+        if [ "${states[$line]}" != online ]; then
+          printf 'That exit node is offline; using it would cut this profile off from the internet. Nothing changed.\n' >&2
+          return 1
+        fi
         set_exit_node "${ips[$line]}"
       else
         printf 'No such choice: %s\n' "$answer" >&2
@@ -418,7 +450,7 @@ login_interactive() {
   wait_for_signature || return 1
   connected_tags="$(self_tags)"
   if url="$(ensure_serve)"; then
-    printf 'Connected as %s%s. T3 Code is published on your tailnet at:\n\n  %s\n\nPair another device: just t3 <profile> qr   (on the host)\n' "$(dns_name)" "${connected_tags:+ ($connected_tags)}" "$url"
+    printf 'Connected as %s%s. T3 Code is published on your tailnet at:\n\n  %s\n\nPair another device: tailnet qr   (or on the host: just t3 <profile> qr)\n' "$(dns_name)" "${connected_tags:+ ($connected_tags)}" "$url"
   else
     printf 'Connected as %s, but publishing T3 Code failed. Try again with: tailnet serve\n' "$(dns_name)" >&2
     return 1
@@ -440,6 +472,7 @@ case "${1:-login}" in
     url="$(ensure_serve)" || { printf 'Not on the tailnet yet - run: tailnet\n' >&2; exit 1; }
     printf '%s\n' "$url"
     ;;
+  qr | pair) pair_qr ;;
   sign-command)
     locked_out || exit 0
     sign_command
